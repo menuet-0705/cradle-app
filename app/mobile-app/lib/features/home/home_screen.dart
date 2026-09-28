@@ -97,6 +97,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onSelected: (v) => switch (v) {
               'edit' => context.push('/children/edit', extra: child),
               'add' => context.push('/children/new'),
+              'family' => context.push('/family'),
+              'invite' => context.push('/invite'),
               'logout' => _logout(),
               _ => null,
             },
@@ -104,6 +106,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               if (child != null)
                 const PopupMenuItem(value: 'edit', child: Text('こどもの情報を編集')),
               const PopupMenuItem(value: 'add', child: Text('こどもを追加')),
+              const PopupMenuDivider(),
+              const PopupMenuItem(value: 'family', child: Text('家族・招待')),
+              const PopupMenuItem(value: 'invite', child: Text('招待コードを入力')),
+              const PopupMenuDivider(),
               const PopupMenuItem(value: 'logout', child: Text('ログアウト')),
             ],
           ),

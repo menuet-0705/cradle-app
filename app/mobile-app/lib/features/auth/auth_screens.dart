@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
+import '../families/pending_invite.dart';
 import 'auth_repository.dart';
 
 class LoginScreen extends StatelessWidget {
@@ -97,6 +98,19 @@ class _AuthFormState extends ConsumerState<_AuthForm> {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 32),
+                    // 招待リンクから来た場合（ログイン後に招待の確認画面へ進む）
+                    if (ref.watch(pendingInviteCodeProvider) != null) ...[
+                      Card(
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Text(
+                            '家族への招待が届いています。招待メールを受け取ったメールアドレスで'
+                            '${isSignup ? '登録' : 'ログイン'}すると、参加の確認画面に進みます。',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     if (isSignup) ...[
                       TextFormField(
                         controller: _name,

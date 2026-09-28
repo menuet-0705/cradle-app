@@ -18,6 +18,8 @@ model User {
   memberships   FamilyMember[]
   refreshTokens RefreshToken[]
   records       Record[]
+  sentInvites   FamilyInvite[] @relation("InviteCreatedBy")
+  usedInvites   FamilyInvite[] @relation("InviteUsedBy")
 
   @@map("users")
 }
@@ -28,6 +30,7 @@ model Family {
   createdAt DateTime       @default(now()) @map("created_at")
   members   FamilyMember[]
   children  Child[]
+  invites   FamilyInvite[]
 
   @@map("families")
 }
@@ -107,4 +110,26 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+/// メールでの家族招待。コードは平文を保存せずハッシュのみ持つ
+model FamilyInvite {
+  id          String    @id @default(uuid()) @db.Uuid
+  familyId    String    @map("family_id") @db.Uuid
+  createdById String?   @map("created_by_id") @db.Uuid
+  /// 招待先（小文字化済み）。このアドレスでログインしている人だけが参加できる
+  email       String
+  codeHash    String    @unique @map("code_hash")
+  expiresAt   DateTime  @map("expires_at")
+  usedAt      DateTime? @map("used_at")
+  usedById    String?   @map("used_by_id") @db.Uuid
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  family      Family    @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation("InviteCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  usedBy      User?     @relation("InviteUsedBy", fields: [usedById], references: [id], onDelete: SetNull)
+
+  @@index([familyId, createdAt])
+  @@index([createdById, createdAt])
+  @@map("family_invites")
 }

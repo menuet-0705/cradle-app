@@ -18,14 +18,16 @@ class ChildrenRepository {
         .toList();
   }
 
+  /// [familyId] 省略時はサーバー側で最初に所属した家族になる
   Future<Child> create({
     required String name,
     required DateTime birthDate,
     Sex? sex,
+    String? familyId,
   }) async {
     final res = await _dio.post<Map<String, dynamic>>(
       '/children',
-      data: _body(name, birthDate, sex),
+      data: {..._body(name, birthDate, sex), 'familyId': ?familyId},
     );
     return Child.fromJson(res.data!);
   }

@@ -7,6 +7,9 @@ import 'core/providers.dart';
 import 'features/auth/auth_screens.dart';
 import 'features/children/child.dart';
 import 'features/children/child_form_screen.dart';
+import 'features/families/family_screen.dart';
+import 'features/families/invite_screen.dart';
+import 'features/families/pending_invite.dart';
 import 'features/home/home_screen.dart';
 import 'features/records/growth_record.dart';
 import 'features/records/record_form_screen.dart';
@@ -23,13 +26,18 @@ final routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       final isPublic = _publicPaths.contains(state.matchedLocation);
       if (!session.isLoggedIn) return isPublic ? null : '/login';
-      if (isPublic) return '/';
+      if (isPublic) {
+        // 招待リンクから来ていれば、ログイン・登録の後に招待の確認画面へ戻す
+        return ref.read(pendingInviteCodeProvider) == null ? '/' : '/invite';
+      }
       return null;
     },
     routes: [
       GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/signup', builder: (_, _) => const SignupScreen()),
+      GoRoute(path: '/family', builder: (_, _) => const FamilyScreen()),
+      GoRoute(path: '/invite', builder: (_, _) => const InviteScreen()),
       GoRoute(
         path: '/children/new',
         builder: (_, _) => const ChildFormScreen(),

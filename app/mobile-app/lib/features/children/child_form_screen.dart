@@ -56,6 +56,8 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
               name: _name.text.trim(),
               birthDate: _birthDate!,
               sex: _sex,
+              // 複数の家族に所属している場合は、いま見ているこどもと同じ家族に登録する
+              familyId: ref.read(selectedChildProvider).value?.familyId,
             )
           : await repo.update(
               existing.id,
