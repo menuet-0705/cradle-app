@@ -1,0 +1,9 @@
+# `flutter run -d chrome` の開発サーバー設定。
+# /api/ をローカル API に転送し、本番（Vercel）と同じ「Web と API が同一オリジン」の構成にする。
+# → CORS 設定も不要で、HttpOnly Cookie によるログイン維持もそのまま確認できる
+server:
+  host: localhost
+  port: 8080
+  proxy:
+    - target: http://localhost:3000/
+      prefix: /api/

@@ -10,7 +10,12 @@ export function configureApp(app: INestApplication): INestApplication {
   const config = app.get<AppConfig>(APP_CONFIG);
   app.setGlobalPrefix('api/v1');
   app.use(helmet());
-  app.enableCors({ origin: config.CORS_ORIGINS, credentials: false });
+  // credentials は許可しない（Web のリフレッシュ Cookie を別オリジンから使わせないための前提。refresh-cookie.ts 参照）
+  app.enableCors({
+    origin: config.CORS_ORIGINS,
+    credentials: false,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
   if (config.isVercel) {
     // Vercel のプロキシ越しでも利用者の IP でレート制限する（Preview でも有効にするため VERCEL で判定）
     (app as NestExpressApplication).set('trust proxy', 1);

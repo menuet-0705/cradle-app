@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "build": "prisma generate && nest build",
+    "build:web": "bash scripts/build-web.sh",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",

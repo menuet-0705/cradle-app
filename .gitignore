@@ -12,3 +12,8 @@ app/backend/node_modules/
 app/backend/dist/
 app/backend/coverage/
 app/backend/src/generated/
+# Flutter Web のビルド成果物（Vercel のビルドで生成）
+app/backend/public/
+
+# TypeScript のビルドキャッシュ
+*.tsbuildinfo

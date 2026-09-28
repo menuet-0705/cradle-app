@@ -42,4 +42,15 @@ void main() {
     expect(session.tokens?.refreshToken, 'r2');
     expect((await reloaded()).tokens?.refreshToken, 'r2');
   });
+
+  test('web mode keeps tokens in memory only', () async {
+    final session = Session(persist: false);
+    await session.save(const Tokens(accessToken: 'a'));
+    expect(session.isLoggedIn, isTrue);
+    expect((await reloaded()).isLoggedIn, isFalse);
+
+    final web = Session(persist: false);
+    await web.load();
+    expect(web.isLoggedIn, isFalse);
+  });
 }

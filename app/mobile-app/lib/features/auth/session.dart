@@ -2,22 +2,34 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class Tokens {
-  const Tokens({required this.accessToken, required this.refreshToken});
+  const Tokens({required this.accessToken, this.refreshToken});
 
-  factory Tokens.fromJson(Map<String, dynamic> json) => Tokens(
-    accessToken: json['accessToken'] as String,
-    refreshToken: json['refreshToken'] as String,
-  );
+  factory Tokens.fromJson(Map<String, dynamic> json) {
+    final refreshToken = json['refreshToken'] as String?;
+    // モバイルは本文でリフレッシュトークンを受け取る前提。欠けていたら保存済みの値を壊さない
+    if (!kIsWeb && refreshToken == null) {
+      throw const FormatException('refreshToken is missing');
+    }
+    return Tokens(
+      accessToken: json['accessToken'] as String,
+      refreshToken: refreshToken,
+    );
+  }
 
   final String accessToken;
-  final String refreshToken;
+
+  /// Web では null（HttpOnly Cookie でブラウザが保持し、JS からは扱わない）
+  final String? refreshToken;
 }
 
-/// ログイン状態。トークンは端末のセキュアストレージ（Keychain / Keystore）に保存する。
-/// ルーターの refreshListenable にも使う。
+/// ログイン状態。ルーターの refreshListenable にも使う。
+///
+/// - モバイル: トークンを端末のセキュアストレージ（Keychain / Keystore）に保存する
+/// - Web: 何も保存しない（アクセストークンはメモリのみ。リロード時は Cookie で復元）
 class Session extends ChangeNotifier {
-  Session({FlutterSecureStorage? storage})
-    : _storage =
+  Session({FlutterSecureStorage? storage, bool persist = !kIsWeb})
+    : _persistEnabled = persist,
+      _storage =
           storage ??
           const FlutterSecureStorage(
             // 端末外（バックアップ・他端末）にトークンを持ち出さない
@@ -29,6 +41,7 @@ class Session extends ChangeNotifier {
   static const _accessKey = 'access_token';
   static const _refreshKey = 'refresh_token';
 
+  final bool _persistEnabled;
   final FlutterSecureStorage _storage;
   Tokens? _tokens;
   int _epoch = 0;
@@ -40,6 +53,7 @@ class Session extends ChangeNotifier {
   bool get isLoggedIn => _tokens != null;
 
   Future<void> load() async {
+    if (!_persistEnabled) return;
     final access = await _storage.read(key: _accessKey);
     final refresh = await _storage.read(key: _refreshKey);
     if (access != null && refresh != null) {
@@ -51,8 +65,7 @@ class Session extends ChangeNotifier {
   Future<bool> save(Tokens tokens, {int? expectedEpoch}) async {
     bool stale() => expectedEpoch != null && _epoch != expectedEpoch;
     if (stale()) return false;
-    await _storage.write(key: _accessKey, value: tokens.accessToken);
-    await _storage.write(key: _refreshKey, value: tokens.refreshToken);
+    await _persist(tokens);
     if (stale()) {
       // 書き込み中にログアウト（や再ログイン）されていたら、現在の状態に戻す
       await _persist(_tokens);
@@ -65,6 +78,7 @@ class Session extends ChangeNotifier {
   }
 
   Future<void> _persist(Tokens? tokens) async {
+    if (!_persistEnabled) return;
     if (tokens == null) {
       await _storage.delete(key: _accessKey);
       await _storage.delete(key: _refreshKey);

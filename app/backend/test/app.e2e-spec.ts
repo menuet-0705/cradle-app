@@ -1,5 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
 import request from 'supertest';
 import { configureApp } from '../src/app.factory.js';
 import { AppModule } from '../src/app.module.js';
@@ -8,6 +9,10 @@ import { PrismaService } from '../src/prisma/prisma.service.js';
 describe('cradle API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
+  let throttler = new ThrottlerStorageService();
+  const throttlerStorage: ThrottlerStorage = {
+    increment: (...args) => throttler.increment(...args),
+  };
 
   const api = () => request(app.getHttpServer());
   let seq = 0;
@@ -24,7 +29,10 @@ describe('cradle API (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(ThrottlerStorage)
+      .useValue(throttlerStorage)
+      .compile();
     app = configureApp(moduleRef.createNestApplication());
     await app.init();
     prisma = app.get(PrismaService);
@@ -36,7 +44,14 @@ describe('cradle API (e2e)', () => {
     await prisma.family.deleteMany();
   });
 
+  // 認証 API のレート制限（1分10回）にテスト自体が引っかからないよう、テストごとに作り直す
+  beforeEach(() => {
+    throttler.onApplicationShutdown();
+    throttler = new ThrottlerStorageService();
+  });
+
   afterAll(async () => {
+    throttler.onApplicationShutdown();
     await app.close();
   });
 
@@ -108,6 +123,80 @@ describe('cradle API (e2e)', () => {
         .post('/api/v1/auth/refresh')
         .send({ refreshToken: latest })
         .expect(401);
+    });
+
+    describe('web (cookie mode)', () => {
+      const WEB = { 'X-Auth-Mode': 'cookie' };
+      const cookieOf = (res: request.Response) => {
+        const raw = res.headers['set-cookie'] as unknown as
+          string[] | undefined;
+        return raw?.find((c) => c.startsWith('__Secure-cradle_rt='));
+      };
+      const valueOf = (cookie: string) => cookie.split(';')[0];
+
+      it('issues an HttpOnly cookie instead of returning the refresh token', async () => {
+        const res = await api()
+          .post('/api/v1/auth/signup')
+          .set(WEB)
+          .send({
+            email: `web${Date.now()}@example.com`,
+            password: 'password123',
+            name: 'web',
+          })
+          .expect(201);
+        expect(res.body).toHaveProperty('accessToken');
+        expect(res.body).not.toHaveProperty('refreshToken');
+        const cookie = cookieOf(res)!;
+        expect(cookie).toMatch(/HttpOnly/);
+        expect(cookie).toMatch(/Secure/);
+        expect(cookie).toMatch(/SameSite=Strict/);
+        expect(cookie).toMatch(/Path=\/api\/v1\/auth/);
+      });
+
+      it('refreshes via cookie, rotates it, and logout clears it', async () => {
+        const email = `web${Date.now()}@example.com`;
+        await signup(); // 別ユーザー（影響しないこと）
+        const s = await api()
+          .post('/api/v1/auth/signup')
+          .set(WEB)
+          .send({ email, password: 'password123', name: 'web' })
+          .expect(201);
+        const c1 = valueOf(cookieOf(s)!);
+
+        const r1 = await api()
+          .post('/api/v1/auth/refresh')
+          .set({ ...WEB, Cookie: c1 })
+          .expect(200);
+        expect(r1.body).not.toHaveProperty('refreshToken');
+        const c2 = valueOf(cookieOf(r1)!);
+        expect(c2).not.toBe(c1);
+
+        // Cookie があってもヘッダーがなければ Cookie は使わない（CSRF 対策）
+        await api()
+          .post('/api/v1/auth/refresh')
+          .set({ Cookie: c2 })
+          .send({})
+          .expect(400);
+
+        const out = await api()
+          .post('/api/v1/auth/logout')
+          .set({ ...WEB, Cookie: c2 })
+          .expect(204);
+        expect(cookieOf(out)).toMatch(/Expires=Thu, 01 Jan 1970/);
+        expect(out.headers['cache-control']).toBe('no-store');
+        await api()
+          .post('/api/v1/auth/refresh')
+          .set({ ...WEB, Cookie: c2 })
+          .expect(401);
+      });
+
+      it('rejects refresh without a cookie or with duplicated cookies', async () => {
+        await api().post('/api/v1/auth/refresh').set(WEB).expect(401);
+        await api()
+          .post('/api/v1/auth/refresh')
+          .set({ ...WEB, Cookie: '__Secure-cradle_rt=a; __Secure-cradle_rt=b' })
+          .expect(401);
+      });
     });
 
     it('logout revokes the refresh token', async () => {

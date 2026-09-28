@@ -19,4 +19,3 @@ export type LoginDto = z.infer<typeof loginSchema>;
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1).max(200),
 });
-export type RefreshDto = z.infer<typeof refreshSchema>;

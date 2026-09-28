@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'app.dart';
+import 'core/api_client.dart';
 import 'core/env.dart';
 import 'core/providers.dart';
+import 'features/auth/auth_repository.dart';
 import 'features/auth/session.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Web の URL を /#/login ではなく /login 形式にする（モバイルでは何もしない）
+  usePathUrlStrategy();
   Env.validate();
   await initializeDateFormatting('ja');
   final session = Session();
@@ -18,6 +23,10 @@ Future<void> main() async {
     // キーストア破損などで読めない場合は、ログアウト状態から始める
     await session.clear().catchError((_) {});
   }
+  await AuthRepository(
+    createBareDio(Env.apiBaseUrl),
+    session,
+  ).restoreWebSession();
 
   runApp(
     ProviderScope(

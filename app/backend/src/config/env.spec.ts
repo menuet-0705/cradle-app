@@ -21,6 +21,19 @@ describe('loadConfig', () => {
     });
   });
 
+  it('reads the schema from DATABASE_URL and rejects unsafe names', () => {
+    expect(loadConfig(base).dbSchema).toBe('public');
+    expect(
+      loadConfig({
+        ...base,
+        DATABASE_URL: `${base.DATABASE_URL}?schema=cradle-app`,
+      }).dbSchema,
+    ).toBe('cradle-app');
+    expect(() =>
+      loadConfig({ ...base, DATABASE_URL: `${base.DATABASE_URL}?schema=a"b` }),
+    ).toThrow(/DATABASE_URL/);
+  });
+
   it('reports only invalid keys, never values', () => {
     expect(() =>
       loadConfig({ ...base, JWT_ACCESS_SECRET: 'short-secret' }),

@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../features/auth/session.dart';
+import 'refresh_lock.dart';
 
 Dio createBareDio(String baseUrl) => Dio(
   BaseOptions(
@@ -8,8 +10,14 @@ Dio createBareDio(String baseUrl) => Dio(
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 20),
     contentType: Headers.jsonContentType,
+    // Web はリフレッシュトークンを HttpOnly Cookie で受け渡す（サーバーはこのヘッダーで判別）
+    headers: {if (kIsWeb) 'X-Auth-Mode': 'cookie'},
   ),
 );
+
+/// リフレッシュトークンの送り方。Web は Cookie で自動的に送られるので本文は空
+Map<String, String>? refreshTokenBody(String? refreshToken) =>
+    refreshToken == null ? null : {'refreshToken': refreshToken};
 
 /// 認証付きの Dio。アクセストークン切れ（401）なら一度だけリフレッシュして再送する。
 Dio createAuthedDio(String baseUrl, Session session) {
@@ -24,18 +32,19 @@ Dio createAuthedDio(String baseUrl, Session session) {
     try {
       final res = await refreshDio.post<Map<String, dynamic>>(
         '/auth/refresh',
-        data: {'refreshToken': current.refreshToken},
+        data: refreshTokenBody(current.refreshToken),
       );
       // 通信中・保存中にログアウトされていたら、新しいトークンで再ログインさせない
       final issued = Tokens.fromJson(res.data!);
       if (session.epoch != epoch ||
           !await session.save(issued, expectedEpoch: epoch)) {
-        refreshDio
-            .post<void>(
-              '/auth/logout',
-              data: {'refreshToken': issued.refreshToken},
-            )
-            .ignore();
+        // ロックを持ったまま失効させる（他タブの更新と重ならないように）
+        try {
+          await refreshDio.post<void>(
+            '/auth/logout',
+            data: refreshTokenBody(issued.refreshToken),
+          );
+        } catch (_) {}
         return false;
       }
       return true;
@@ -65,9 +74,9 @@ Dio createAuthedDio(String baseUrl, Session session) {
           return handler.next(error);
         }
         // 同時に複数のリクエストが 401 になっても、リフレッシュは 1 回にまとめる
-        final ok = await (refreshing ??= refresh().whenComplete(
-          () => refreshing = null,
-        ));
+        // Web は他のタブとも排他する（withRefreshLock）
+        final ok = await (refreshing ??= withRefreshLock(refresh)
+            .whenComplete(() => refreshing = null));
         final token = session.tokens?.accessToken;
         if (!ok || token == null) return handler.next(error);
         try {

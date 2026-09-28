@@ -34,7 +34,12 @@ const envSchema = z.object({
 export type AppConfig = Omit<z.infer<typeof envSchema>, 'DB_POOL_MAX'> & {
   DB_POOL_MAX: number;
   isVercel: boolean;
+  /** DATABASE_URL の `?schema=` で指定したスキーマ（既定 public） */
+  dbSchema: string;
 };
+
+// 生 SQL に埋め込むため、識別子として安全な文字だけを許可する
+const SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,62}$/;
 
 // .env.example やテストの値を本番に流用させない
 const PLACEHOLDER_SECRET = /change-me|local-dev|test-/i;
@@ -49,9 +54,15 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     throw new Error(`Invalid environment variables: ${keys}`);
   }
   const isVercel = Boolean(result.data.VERCEL);
+  const dbSchema =
+    new URL(result.data.DATABASE_URL).searchParams.get('schema') ?? 'public';
+  if (!SCHEMA_NAME.test(dbSchema)) {
+    throw new Error('Invalid environment variables: DATABASE_URL (schema)');
+  }
   const config: AppConfig = {
     ...result.data,
     isVercel,
+    dbSchema,
     DB_POOL_MAX: result.data.DB_POOL_MAX ?? (isVercel ? 2 : 10),
   };
   if (

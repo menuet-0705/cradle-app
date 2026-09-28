@@ -88,7 +88,7 @@ export class RecordsService {
       SELECT to_char((started_at AT TIME ZONE ${q.tz})::date, 'YYYY-MM-DD') AS "date",
              COALESCE(SUM(amount_ml), 0) AS "totalMl",
              COUNT(*) AS "count"
-        FROM records
+        FROM ${this.prisma.schema}.records
        WHERE child_id = ${childId}::uuid
          AND type = 'MILK'
          -- インデックス (child_id, type, started_at) を使うための粗い範囲（タイムゾーン差を含めて前後に余裕を持たせる）
