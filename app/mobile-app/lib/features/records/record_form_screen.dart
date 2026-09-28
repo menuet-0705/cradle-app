@@ -30,6 +30,8 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   final _amount = TextEditingController();
   final _weightKg = TextEditingController();
   final _note = TextEditingController();
+  MealAmount? _mealAmount;
+  MealReaction? _mealReaction;
   late DateTime _startedAt;
   late DateTime _endedAt;
   bool _saving = false;
@@ -100,6 +102,8 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                   ? (double.parse(_weightKg.text) * 1000).round()
                   : null,
               note: _note.text.trim(),
+              mealAmount: type == RecordType.meal ? _mealAmount : null,
+              mealReaction: type == RecordType.meal ? _mealReaction : null,
             ),
           );
       invalidateRecords(ref);
@@ -200,6 +204,24 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                   ? '入力してください'
                   : null,
             ),
+            if (type == RecordType.meal) ...[
+              // 好みの推定（食事の提案）に使う。どちらも任意で、選び直すと解除できる
+              _OptionalChoice<MealAmount>(
+                label: '食べた量（任意）',
+                values: MealAmount.values,
+                labelOf: (v) => v.label,
+                selected: _mealAmount,
+                onChanged: (v) => setState(() => _mealAmount = v),
+              ),
+              const SizedBox(height: 16),
+              _OptionalChoice<MealReaction>(
+                label: '反応（任意）',
+                values: MealReaction.values,
+                labelOf: (v) => v.label,
+                selected: _mealReaction,
+                onChanged: (v) => setState(() => _mealReaction = v),
+              ),
+            ],
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : _save,
@@ -208,6 +230,44 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _OptionalChoice<T> extends StatelessWidget {
+  const _OptionalChoice({
+    required this.label,
+    required this.values,
+    required this.labelOf,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final String label;
+  final List<T> values;
+  final String Function(T) labelOf;
+  final T? selected;
+  final ValueChanged<T?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final v in values)
+              ChoiceChip(
+                label: Text(labelOf(v)),
+                selected: selected == v,
+                onSelected: (on) => onChanged(on ? v : null),
+              ),
+          ],
+        ),
+      ],
     );
   }
 }

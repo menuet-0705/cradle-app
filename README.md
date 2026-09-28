@@ -16,7 +16,8 @@
 | | ローカル | 検証/本番 |
 |---|---|---|
 | DB | Docker の Postgres 17 | Supabase Postgres |
-| メール（家族招待） | Docker の Mailpit（外部に届かない。http://localhost:8025 で確認） | Resend（SMTP） |
+| メール（家族招待・レポート完成） | Docker の Mailpit（外部に届かない。http://localhost:8025 で確認） | Resend（SMTP） |
+| AI（食事の提案・週次レポート） | `ANTHROPIC_API_KEY` を設定したときだけ有効（実際に課金される） | Claude API（既定 `claude-sonnet-5`） |
 | API | `npm run start:dev` | Vercel |
 | API の環境変数 | `app/backend/.env`（`.env.example` をコピー） | Vercel の Environment Variables |
 | モバイルの接続先 | 既定値（`http://localhost:3000/api/v1`、Android エミュレータは `10.0.2.2`） | `--dart-define=API_BASE_URL=https://...` |
@@ -69,7 +70,13 @@ cd app/mobile-app && flutter analyze && flutter test
 
 # アプリの通信コード ↔ API の結合テスト（API をローカル起動した状態で）
 API_CONTRACT_BASE_URL=http://localhost:3000/api/v1 flutter test test/api_contract_test.dart
+
+# 実際の Claude API で食事の提案・週次レポートを 1 件ずつ生成（DB 不要。数円〜数十円かかる）
+cd app/backend && ANTHROPIC_API_KEY=... npm run ai:smoke            # 提案のみ
+cd app/backend && ANTHROPIC_API_KEY=... npm run ai:smoke -- --report # 週次レポートも（Batch。最大 10 分）
 ```
+
+e2e テストでは Claude の呼び出しを差し替えるので、API キーは不要・費用もかかりません。
 
 ## 検証/本番デプロイ
 
@@ -109,6 +116,10 @@ https://<domain>/api/v1/*  → NestJS（Vercel Function）
      - `SMTP_URL=smtps://resend:<Resend の API キー>@smtp.resend.com:465`
      - `MAIL_FROM=すくすく記録 <no-reply@<認証済みドメイン>>`
      - `APP_URL=https://<domain>`（招待リンクの起点。https 必須）
+   - AI（食事の提案・週次レポート）
+     - `ANTHROPIC_API_KEY`（未設定なら提案は 503、週次レポートは作らない）
+     - `CLAUDE_MODEL`（任意。既定 `claude-sonnet-5`。adaptive thinking と effort に対応したモデルを指定）
+     - `CRON_SECRET`（32 文字以上。`openssl rand -hex 32` など）。Vercel Cron はこの値を `Authorization: Bearer` に付けて呼ぶ
 3. ビルドでは API のビルドに続けて `scripts/build-web.sh` が Flutter（バージョン固定）を取得し、Web をビルドします（数分かかります）
 4. Preview デプロイは誰でもアクセスできるため、Deployment Protection を有効にし、Preview 用の環境変数（DB・秘密鍵）は本番と分ける
 5. デプロイ後の確認
@@ -145,4 +156,19 @@ flutter build appbundle --dart-define=API_BASE_URL=https://<domain>/api/v1
 | DELETE | `/families/:id/invites/:inviteId` | 招待の取り消し |
 | DELETE | `/families/:id/members/:userId` | メンバーを外す（管理者）/ 自分なら退出 |
 | POST | `/invites/preview` `/invites/accept` | 招待コードの確認 / 参加（`code`。招待されたアドレスのユーザーのみ） |
+| POST / DELETE | `/families/:id/ai-consent` | AI 機能への同意（`version`）/ 取り消し（管理者のみ） |
+| GET / POST | `/children/:id/meal-suggestions/latest` / `/children/:id/meal-suggestions` | 最新の食事の提案 / 提案を作る（こども 1 日 3 回・人と家族は 1 日 10 回まで。同意が必要） |
+| GET | `/children/:id/weekly-reports` `/children/:id/weekly-reports/:reportId` | 週次レポートの一覧 / 詳細 |
+| GET | `/cron/weekly-reports/submit` `/cron/weekly-reports/collect` | Vercel Cron 専用（`CRON_SECRET` で認証） |
+
+### AI 機能と同意
+- 食事の提案・週次レポートは、こどもの記録（月齢・性別・アレルギー・避けたい食材・ミルク・睡眠・体重・食事）を Anthropic 社（米国）の Claude API に送って作る。名前・メールアドレスは送らない
+- 家族の管理者が「ふりかえり」タブで説明を読んで同意した家族だけが対象。家族の画面からいつでも取り消せる
+- 送る内容を変えるときは、アプリ（`ai_consent.dart`）とサーバー（`ai-consent.ts`）の同意の版を上げる（既存の同意は無効になり、再同意が必要）
+- 生成物はサーバー側でも確認し、避けたい食材・1 歳未満のはちみつを含む提案は表示しない。食事の提案は 90 日で削除
+
+### 週次レポートの仕組み
+- 金曜 17:00 JST（`vercel.json` の crons: `0 8 * * 5`）に、直近 7 日間に記録があるこどものレポートを Claude の Batches API（半額）でまとめて依頼
+- 毎日 20:00 JST（`0 11 * * *`）に、依頼に失敗した分の再依頼・結果の回収・家族全員への完成メールを行う。アプリで「ふりかえり」を開いたときにも（そのこどもの分だけ）回収するので、多くは当日中に見られる
+- Hobby プランの Cron は実行時刻が最大 59 分ずれるため、依頼と回収の間隔をあけている
 | GET | `/health` | ヘルスチェック |

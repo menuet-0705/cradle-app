@@ -6,9 +6,19 @@
   "functions": {
     "api/index.js": {
       "includeFiles": "dist/**",
-      "maxDuration": 10
+      "maxDuration": 60
     }
   },
+  "crons": [
+    {
+      "path": "/api/v1/cron/weekly-reports/submit",
+      "schedule": "0 8 * * 5"
+    },
+    {
+      "path": "/api/v1/cron/weekly-reports/collect",
+      "schedule": "0 11 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

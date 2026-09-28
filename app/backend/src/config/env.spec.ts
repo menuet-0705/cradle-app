@@ -93,4 +93,38 @@ describe('loadConfig', () => {
       }).mail?.appUrl,
     ).toBe('https://example.com');
   });
+
+  it('enables AI only with an API key and defaults to Claude Sonnet 5', () => {
+    expect(loadConfig(base).ai).toBeUndefined();
+    expect(loadConfig({ ...base, ANTHROPIC_API_KEY: 'k' }).ai).toEqual({
+      apiKey: 'k',
+      model: 'claude-sonnet-5',
+      baseUrl: 'https://api.anthropic.com',
+    });
+    expect(() => loadConfig({ ...base, CLAUDE_MODEL: 'gpt-5' })).toThrow(
+      /CLAUDE_MODEL/,
+    );
+    expect(() => loadConfig({ ...base, CRON_SECRET: 'short' })).toThrow(
+      /CRON_SECRET/,
+    );
+  });
+
+  it('guards CRON_SECRET in production', () => {
+    const prod = { ...base, NODE_ENV: 'production' };
+    expect(() => loadConfig({ ...prod, ANTHROPIC_API_KEY: 'k' })).toThrow(
+      /CRON_SECRET is required/,
+    );
+    expect(() =>
+      loadConfig({
+        ...prod,
+        CRON_SECRET: 'test-cron-secret-0123456789-0123456789',
+      }),
+    ).toThrow(/CRON_SECRET must not be a placeholder/);
+    const ok = { ...prod, ANTHROPIC_API_KEY: 'k', CRON_SECRET: 'x'.repeat(40) };
+    expect(loadConfig(ok).ai).toBeDefined();
+    // 本番では公式以外の接続先を拒否する（記録と API キーを別のホストに送らない）
+    expect(() =>
+      loadConfig({ ...ok, ANTHROPIC_BASE_URL: 'http://127.0.0.1:4010' }),
+    ).toThrow(/ANTHROPIC_BASE_URL/);
+  });
 });

@@ -43,6 +43,9 @@ export const createRecordSchema = z.discriminatedUnion('type', [
     type: z.literal('MEAL'),
     startedAt: pastDatetime,
     note: note.min(1),
+    // 食べた量・反応（任意）。好みの推定に使う
+    mealAmount: z.enum(['ALL', 'HALF', 'LITTLE', 'NONE']).nullish(),
+    mealReaction: z.enum(['LIKED', 'NEUTRAL', 'DISLIKED']).nullish(),
   }),
 ]);
 export type CreateRecordDto = z.infer<typeof createRecordSchema>;

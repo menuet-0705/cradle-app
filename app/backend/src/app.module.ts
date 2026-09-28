@@ -6,6 +6,7 @@ import { RateLimitGuard, RateLimitStore } from './common/rate-limit.js';
 import { ConfigModule } from './config/config.module.js';
 import { FamiliesModule } from './families/families.module.js';
 import { HealthController } from './health/health.controller.js';
+import { InsightsModule } from './insights/insights.module.js';
 import { MailModule } from './mail/mail.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RecordsModule } from './records/records.module.js';
@@ -19,6 +20,7 @@ import { RecordsModule } from './records/records.module.js';
     ChildrenModule,
     RecordsModule,
     FamiliesModule,
+    InsightsModule,
   ],
   controllers: [HealthController],
   providers: [RateLimitStore, { provide: APP_GUARD, useClass: RateLimitGuard }],

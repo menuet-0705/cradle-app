@@ -32,12 +32,14 @@ class Family {
     required this.name,
     required this.myRole,
     required this.members,
+    this.aiEnabled = false,
   });
 
   factory Family.fromJson(Map<String, dynamic> json) => Family(
     id: json['id'] as String,
     name: json['name'] as String,
     myRole: FamilyRole.fromApi(json['myRole'] as String),
+    aiEnabled: json['aiEnabled'] as bool? ?? false,
     members: (json['members'] as List<dynamic>)
         .map((m) => FamilyMember.fromJson(m as Map<String, dynamic>))
         .toList(),
@@ -47,6 +49,9 @@ class Family {
   final String name;
   final FamilyRole myRole;
   final List<FamilyMember> members;
+
+  /// AI 機能（食事の提案・週次レポート）に管理者が同意済みか
+  final bool aiEnabled;
 
   bool get isOwner => myRole == FamilyRole.owner;
 }

@@ -10,3 +10,9 @@ export const inviteCodeSchema = z.object({
   code: z.string().min(1).max(40),
 });
 export type InviteCodeDto = z.infer<typeof inviteCodeSchema>;
+
+// 画面で説明した同意の版（サーバーの版と一致しなければ同意として受け付けない）
+export const aiConsentSchema = z.object({
+  version: z.number().int().positive(),
+});
+export type AiConsentDto = z.infer<typeof aiConsentSchema>;

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../insights/ai_consent.dart';
 import 'family.dart';
 
 class FamiliesRepository {
@@ -28,6 +29,14 @@ class FamiliesRepository {
 
   Future<void> revokeInvite(String familyId, String inviteId) =>
       _dio.delete<void>('/families/$familyId/invites/$inviteId');
+
+  /// AI 機能への同意・取り消し（管理者のみ）
+  Future<void> setAiConsent(String familyId, {required bool enabled}) => enabled
+      ? _dio.post<void>(
+          '/families/$familyId/ai-consent',
+          data: {'version': aiConsentVersion},
+        )
+      : _dio.delete<void>('/families/$familyId/ai-consent');
 
   /// 自分なら退出、他人なら削除（管理者のみ）
   Future<void> removeMember(String familyId, String userId) =>

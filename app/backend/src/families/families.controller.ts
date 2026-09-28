@@ -12,8 +12,10 @@ import { CurrentUser, type AuthUser } from '../common/auth.decorators.js';
 import { RateLimit } from '../common/rate-limit.js';
 import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import {
+  aiConsentSchema,
   createInviteSchema,
   inviteCodeSchema,
+  type AiConsentDto,
   type CreateInviteDto,
   type InviteCodeDto,
 } from './families.dto.js';
@@ -32,6 +34,27 @@ export class FamiliesController {
   @Get('families')
   list(@CurrentUser() user: AuthUser) {
     return this.families.list(user.id);
+  }
+
+  /** AI 機能への同意（管理者のみ）。画面で説明した同意の版を送る */
+  @HttpCode(200)
+  @Post('families/:familyId/ai-consent')
+  consentAi(
+    @CurrentUser() user: AuthUser,
+    @Param('familyId', ParseUUIDPipe) familyId: string,
+    @Body(new ZodValidationPipe(aiConsentSchema)) dto: AiConsentDto,
+  ) {
+    return this.families.setAiConsent(user.id, familyId, dto);
+  }
+
+  /** AI 機能への同意の取り消し（管理者のみ） */
+  @HttpCode(200)
+  @Delete('families/:familyId/ai-consent')
+  revokeAi(
+    @CurrentUser() user: AuthUser,
+    @Param('familyId', ParseUUIDPipe) familyId: string,
+  ) {
+    return this.families.setAiConsent(user.id, familyId, null);
   }
 
   @RateLimit(SEND_LIMIT)

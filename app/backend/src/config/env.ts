@@ -34,6 +34,20 @@ const envSchema = z.object({
     .url({ protocol: /^https?$/ })
     .transform((v) => v.replace(/\/+$/, ''))
     .optional(),
+  // ---- Claude API（食事の提案・週次レポート）。キー未設定なら機能を止める ----
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  CLAUDE_MODEL: z
+    .string()
+    .regex(/^claude-[a-z0-9.-]+$/)
+    .default('claude-sonnet-5'),
+  // サービス全体での食事の提案の 1 日の上限（アカウントを大量に作られても費用が増え続けないように）
+  AI_SUGGESTIONS_DAILY_MAX: z.coerce.number().int().positive().default(300),
+  // 接続先。通常は既定のまま（ローカルの確認で模擬サーバーに向けるときだけ変える）
+  ANTHROPIC_BASE_URL: z
+    .url({ protocol: /^https?$/ })
+    .default('https://api.anthropic.com'),
+  // Vercel Cron の認証（Vercel が Authorization: Bearer <CRON_SECRET> を付けて呼ぶ）
+  CRON_SECRET: z.string().min(32).optional(),
   CORS_ORIGINS: z
     .string()
     .default('')
@@ -52,6 +66,8 @@ export type AppConfig = Omit<z.infer<typeof envSchema>, 'DB_POOL_MAX'> & {
   dbSchema: string;
   /** メール送信の設定。未設定なら招待メールは送れない */
   mail?: { smtpUrl: string; from: string; appUrl: string };
+  /** Claude API の設定。未設定なら食事の提案・週次レポートは動かない */
+  ai?: { apiKey: string; model: string; baseUrl: string };
 };
 
 // 生 SQL に埋め込むため、識別子として安全な文字だけを許可する
@@ -107,6 +123,31 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
       );
     }
     config.mail = { smtpUrl: SMTP_URL, from: MAIL_FROM, appUrl: APP_URL };
+  }
+  const deployed = config.NODE_ENV === 'production' || isVercel;
+  if (
+    config.CRON_SECRET &&
+    deployed &&
+    PLACEHOLDER_SECRET.test(config.CRON_SECRET)
+  ) {
+    throw new Error('CRON_SECRET must not be a placeholder value');
+  }
+  if (config.ANTHROPIC_API_KEY) {
+    // 本番で CRON_SECRET がないと週次レポートが黙って作られなくなるので、起動時に気づけるようにする
+    if (deployed && !config.CRON_SECRET) {
+      throw new Error(
+        'Invalid environment variables: CRON_SECRET is required when ANTHROPIC_API_KEY is set',
+      );
+    }
+    // 本番でこどもの記録と API キーを別のホストに送らないよう、公式の接続先以外は拒否する
+    if (deployed && config.ANTHROPIC_BASE_URL !== 'https://api.anthropic.com') {
+      throw new Error('Invalid environment variables: ANTHROPIC_BASE_URL');
+    }
+    config.ai = {
+      apiKey: config.ANTHROPIC_API_KEY,
+      model: config.CLAUDE_MODEL,
+      baseUrl: config.ANTHROPIC_BASE_URL,
+    };
   }
   return config;
 }

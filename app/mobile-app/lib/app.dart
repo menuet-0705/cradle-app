@@ -11,12 +11,18 @@ import 'features/families/family_screen.dart';
 import 'features/families/invite_screen.dart';
 import 'features/families/pending_invite.dart';
 import 'features/home/home_screen.dart';
+import 'features/insights/weekly_report_screen.dart';
 import 'features/records/growth_record.dart';
 import 'features/records/record_form_screen.dart';
 
 typedef NewRecordArgs = ({String childId, RecordType type, DateTime day});
 
 const _publicPaths = {'/login', '/signup'};
+
+final _uuid = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  caseSensitive: false,
+);
 
 final routerProvider = Provider<GoRouter>((ref) {
   final session = ref.watch(sessionProvider);
@@ -38,6 +44,19 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/signup', builder: (_, _) => const SignupScreen()),
       GoRoute(path: '/family', builder: (_, _) => const FamilyScreen()),
       GoRoute(path: '/invite', builder: (_, _) => const InviteScreen()),
+      // ID は UUID 以外を受け付けない（細工したリンクで別の API パスを呼ばせない）
+      GoRoute(
+        path: '/children/:childId/reports/:reportId',
+        redirect: (_, state) =>
+            _uuid.hasMatch(state.pathParameters['childId'] ?? '') &&
+                _uuid.hasMatch(state.pathParameters['reportId'] ?? '')
+            ? null
+            : '/',
+        builder: (_, state) => WeeklyReportScreen(
+          childId: state.pathParameters['childId']!,
+          reportId: state.pathParameters['reportId']!,
+        ),
+      ),
       GoRoute(
         path: '/children/new',
         builder: (_, _) => const ChildFormScreen(),

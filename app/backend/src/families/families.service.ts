@@ -13,6 +13,7 @@ import { APP_CONFIG, type AppConfig } from '../config/env.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { MAILER, type Mailer } from '../mail/mailer.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { AI_CONSENT_VERSION } from './ai-consent.js';
 import {
   generateInviteCode,
   hashInviteCode,
@@ -94,6 +95,8 @@ export class FamiliesService {
           select: {
             id: true,
             name: true,
+            aiConsentAt: true,
+            aiConsentVersion: true,
             members: {
               orderBy: { createdAt: 'asc' },
               select: {
@@ -110,6 +113,10 @@ export class FamiliesService {
       id: family.id,
       name: family.name,
       myRole: role,
+      // 同意の内容を変えたら版を上げ、古い版の同意は無効として扱う
+      aiEnabled:
+        family.aiConsentAt != null &&
+        family.aiConsentVersion === AI_CONSENT_VERSION,
       members: family.members.map((m) => ({
         userId: m.user.id,
         name: m.user.name,
@@ -398,6 +405,51 @@ export class FamiliesService {
         });
       }
     }, TX_OPTIONS);
+  }
+
+  /**
+   * AI 機能への同意・取り消し（管理者のみ）。
+   * こどもの記録を外国（米国）の事業者に送る判断なので、家族の管理者に限る
+   */
+  async setAiConsent(
+    userId: string,
+    familyId: string,
+    consent: { version: number } | null,
+  ) {
+    const { role } = await this.membership(userId, familyId);
+    if (role !== 'OWNER') {
+      throw new ForbiddenException(
+        body('OWNER_ONLY', 'Only the owner can change AI settings'),
+      );
+    }
+    if (consent && consent.version !== AI_CONSENT_VERSION) {
+      // 画面に出した説明と、サーバーが想定する同意の内容が食い違っている（古いアプリなど）
+      throw new ConflictException(
+        body('CONSENT_OUTDATED', 'Consent version is outdated'),
+      );
+    }
+    await this.prisma.$transaction([
+      this.prisma.family.update({
+        where: { id: familyId },
+        data: consent
+          ? {
+              aiConsentAt: new Date(),
+              aiConsentVersion: consent.version,
+              aiConsentById: userId,
+            }
+          : { aiConsentAt: null, aiConsentVersion: null, aiConsentById: null },
+      }),
+      // 取り消したら、作成中のレポートも完成させない（結果を保存せず、メールも送らない）
+      ...(consent
+        ? []
+        : [
+            this.prisma.weeklyReport.updateMany({
+              where: { status: 'PENDING', child: { familyId } },
+              data: { status: 'FAILED' },
+            }),
+          ]),
+    ]);
+    return { aiEnabled: consent != null };
   }
 
   /** 所属していなければ 404（他家族の存在を推測させない） */

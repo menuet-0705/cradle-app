@@ -6,6 +6,13 @@ export const createChildSchema = z.object({
   name: z.string().trim().min(1).max(50),
   birthDate: isoDate,
   sex: z.enum(['MALE', 'FEMALE']).nullish(),
+  // アレルギー・避けたい食材（食事の提案で必ず除外する）。空文字は未設定として扱う
+  avoidFoods: z
+    .string()
+    .trim()
+    .max(500)
+    .transform((v) => v || null)
+    .nullish(),
   // 省略時は本人が最初に所属した家族
   familyId: z.uuid().optional(),
 });

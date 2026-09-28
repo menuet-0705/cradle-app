@@ -7,6 +7,7 @@ class Child {
     required this.name,
     required this.birthDate,
     this.sex,
+    this.avoidFoods,
   });
 
   factory Child.fromJson(Map<String, dynamic> json) => Child(
@@ -20,6 +21,7 @@ class Child {
       'FEMALE' => Sex.female,
       _ => null,
     },
+    avoidFoods: json['avoidFoods'] as String?,
   );
 
   final String id;
@@ -27,6 +29,9 @@ class Child {
   final String name;
   final DateTime birthDate;
   final Sex? sex;
+
+  /// アレルギー・避けたい食材（食事の提案で除外される）
+  final String? avoidFoods;
 
   /// 例: 「0歳5か月」
   String ageLabel(DateTime now) {

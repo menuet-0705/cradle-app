@@ -23,6 +23,9 @@ export default defineConfig({
       SMTP_URL: 'smtp://localhost:1025',
       MAIL_FROM: 'すくすく記録 <no-reply@cradle.test>',
       APP_URL: 'http://localhost:8080',
+      // Claude の呼び出しはテストで差し替えるので、実際には使われない
+      ANTHROPIC_API_KEY: 'test-anthropic-key',
+      CRON_SECRET: 'test-cron-secret-0123456789-0123456789',
     },
   },
 });

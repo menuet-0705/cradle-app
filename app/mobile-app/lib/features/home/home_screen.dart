@@ -10,6 +10,7 @@ import '../children/children_providers.dart';
 import '../records/growth_record.dart';
 import '../records/records_providers.dart';
 import '../records/records_tab.dart';
+import '../insights/insights_tab.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -132,10 +133,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         data: (child) => child == null
             ? _NoChildren(onAdd: () => context.push('/children/new'))
-            // 表示中のタブだけを作り、グラフは開いたときに取得する
-            : _tab == 0
-            ? RecordsTab(childId: child.id)
-            : ChartsTab(childId: child.id),
+            // 表示中のタブだけを作り、グラフ・ふりかえりは開いたときに取得する
+            : switch (_tab) {
+                0 => RecordsTab(childId: child.id),
+                1 => ChartsTab(childId: child.id),
+                _ => InsightsTab(childId: child.id, familyId: child.familyId),
+              },
       ),
       floatingActionButton: child == null || _tab != 0
           ? null
@@ -157,6 +160,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 NavigationDestination(
                   icon: Icon(Icons.show_chart),
                   label: 'グラフ',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  label: 'ふりかえり',
                 ),
               ],
             ),

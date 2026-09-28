@@ -109,6 +109,24 @@ class _FamilySection extends ConsumerWidget {
     }
   }
 
+  Future<void> _disableAi(BuildContext context, WidgetRef ref) async {
+    final ok = await _confirm(
+      context,
+      title: 'AI 機能をオフにしますか？',
+      body: '以後、記録を AI に送らなくなり、食事の提案と週次レポートは作られません。これまでのレポートは残ります。',
+      action: 'オフにする',
+    );
+    if (!ok || !context.mounted) return;
+    try {
+      await ref
+          .read(familiesRepositoryProvider)
+          .setAiConsent(family.id, enabled: false);
+      ref.invalidate(familiesProvider);
+    } catch (e) {
+      if (context.mounted) _snack(context, errorMessage(e));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final myId = ref.watch(myUserIdProvider).value;
@@ -148,6 +166,22 @@ class _FamilySection extends ConsumerWidget {
                         )
                       : null),
           ),
+        _Header('AI 機能（ふりかえり）'),
+        SwitchListTile(
+          title: const Text('AI による食事の提案・週次レポート'),
+          subtitle: Text(
+            family.isOwner
+                ? '記録を Anthropic 社（米国）に送って作成します。オフにすると以後は送りません'
+                : '家族の管理者が設定できます',
+          ),
+          value: family.aiEnabled,
+          onChanged: family.isOwner
+              ? (on) => on
+                    // 有効にするときは説明を読んでもらうため「ふりかえり」タブから
+                    ? _snack(context, '「ふりかえり」タブで説明を読んでから有効にできます')
+                    : _disableAi(context, ref)
+              : null,
+        ),
         _Header('招待中'),
         invites.when(
           loading: () => const Padding(

@@ -16,6 +16,8 @@ const recordSelect = {
   amountMl: true,
   weightG: true,
   note: true,
+  mealAmount: true,
+  mealReaction: true,
   createdAt: true,
   createdBy: { select: { id: true, name: true } },
 } as const;
@@ -53,6 +55,8 @@ export class RecordsService {
         amountMl: dto.type === 'MILK' ? dto.amountMl : null,
         weightG: dto.type === 'WEIGHT' ? dto.weightG : null,
         note: dto.note ?? null,
+        mealAmount: dto.type === 'MEAL' ? (dto.mealAmount ?? null) : null,
+        mealReaction: dto.type === 'MEAL' ? (dto.mealReaction ?? null) : null,
       },
       select: recordSelect,
     });

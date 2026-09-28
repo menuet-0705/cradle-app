@@ -9,28 +9,34 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid()) @db.Uuid
-  email         String         @unique
-  passwordHash  String         @map("password_hash")
-  name          String
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  memberships   FamilyMember[]
-  refreshTokens RefreshToken[]
-  records       Record[]
-  sentInvites   FamilyInvite[] @relation("InviteCreatedBy")
-  usedInvites   FamilyInvite[] @relation("InviteUsedBy")
+  id              String           @id @default(uuid()) @db.Uuid
+  email           String           @unique
+  passwordHash    String           @map("password_hash")
+  name            String
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  memberships     FamilyMember[]
+  refreshTokens   RefreshToken[]
+  records         Record[]
+  mealSuggestions MealSuggestion[]
+  sentInvites     FamilyInvite[]   @relation("InviteCreatedBy")
+  usedInvites     FamilyInvite[]   @relation("InviteUsedBy")
 
   @@map("users")
 }
 
 model Family {
-  id        String         @id @default(uuid()) @db.Uuid
-  name      String
-  createdAt DateTime       @default(now()) @map("created_at")
-  members   FamilyMember[]
-  children  Child[]
-  invites   FamilyInvite[]
+  id               String         @id @default(uuid()) @db.Uuid
+  name             String
+  /// AI 機能（食事の提案・週次レポート）で記録を Anthropic（米国）に送ることへの同意。
+  /// 管理者が同意した家族だけが対象になる。取り消すと null
+  aiConsentAt      DateTime?      @map("ai_consent_at")
+  aiConsentVersion Int?           @map("ai_consent_version")
+  aiConsentById    String?        @map("ai_consent_by_id") @db.Uuid
+  createdAt        DateTime       @default(now()) @map("created_at")
+  members          FamilyMember[]
+  children         Child[]
+  invites          FamilyInvite[]
 
   @@map("families")
 }
@@ -59,15 +65,19 @@ enum Sex {
 }
 
 model Child {
-  id        String   @id @default(uuid()) @db.Uuid
-  familyId  String   @map("family_id") @db.Uuid
-  name      String
-  birthDate DateTime @map("birth_date") @db.Date
-  sex       Sex?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  records   Record[]
+  id              String           @id @default(uuid()) @db.Uuid
+  familyId        String           @map("family_id") @db.Uuid
+  name            String
+  birthDate       DateTime         @map("birth_date") @db.Date
+  sex             Sex?
+  /// アレルギー・避けたい食材（食事の提案で必ず除外する）
+  avoidFoods      String?          @map("avoid_foods")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  family          Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  records         Record[]
+  mealSuggestions MealSuggestion[]
+  weeklyReports   WeeklyReport[]
 
   @@index([familyId])
   @@map("children")
@@ -80,19 +90,35 @@ enum RecordType {
   MEAL
 }
 
+enum MealAmount {
+  ALL
+  HALF
+  LITTLE
+  NONE
+}
+
+enum MealReaction {
+  LIKED
+  NEUTRAL
+  DISLIKED
+}
+
 model Record {
-  id          String     @id @default(uuid()) @db.Uuid
-  childId     String     @map("child_id") @db.Uuid
-  createdById String?    @map("created_by_id") @db.Uuid
-  type        RecordType
-  startedAt   DateTime   @map("started_at") @db.Timestamptz(3)
-  endedAt     DateTime?  @map("ended_at") @db.Timestamptz(3)
-  amountMl    Int?       @map("amount_ml")
-  weightG     Int?       @map("weight_g")
-  note        String?
-  createdAt   DateTime   @default(now()) @map("created_at")
-  child       Child      @relation(fields: [childId], references: [id], onDelete: Cascade)
-  createdBy   User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  id           String        @id @default(uuid()) @db.Uuid
+  childId      String        @map("child_id") @db.Uuid
+  createdById  String?       @map("created_by_id") @db.Uuid
+  type         RecordType
+  startedAt    DateTime      @map("started_at") @db.Timestamptz(3)
+  endedAt      DateTime?     @map("ended_at") @db.Timestamptz(3)
+  amountMl     Int?          @map("amount_ml")
+  weightG      Int?          @map("weight_g")
+  note         String?
+  /// 食事のみ（任意）
+  mealAmount   MealAmount?   @map("meal_amount")
+  mealReaction MealReaction? @map("meal_reaction")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  child        Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy    User?         @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([childId, startedAt])
   @@index([childId, type, startedAt])
@@ -132,4 +158,59 @@ model FamilyInvite {
   @@index([familyId, createdAt])
   @@index([createdById, createdAt])
   @@map("family_invites")
+}
+
+enum MealSuggestionStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+/// Claude による次の食事の提案（こどもごとに履歴を残し、最新を表示する）。
+/// Claude を呼ぶ前に PENDING で作って回数枠を確保し、失敗も回数に数える（失敗しても課金されうるため）
+model MealSuggestion {
+  id          String               @id @default(uuid()) @db.Uuid
+  childId     String               @map("child_id") @db.Uuid
+  createdById String?              @map("created_by_id") @db.Uuid
+  status      MealSuggestionStatus @default(PENDING)
+  /// 構造化出力（サーバーで検証済みの JSON）。READY のときだけ入る
+  content     Json?
+  model       String
+  createdAt   DateTime             @default(now()) @map("created_at")
+  child       Child                @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy   User?                @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([childId, createdAt])
+  @@index([createdById, createdAt])
+  // サービス全体の 1 日の件数（ロック中に数える）を速くする
+  @@index([createdAt])
+  @@map("meal_suggestions")
+}
+
+enum WeeklyReportStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+/// 週次の習慣レポート。Batches API で非同期に作る
+model WeeklyReport {
+  id          String             @id @default(uuid()) @db.Uuid
+  childId     String             @map("child_id") @db.Uuid
+  /// 対象期間（前週金曜 17:00〜今週金曜 17:00 JST）
+  periodStart DateTime           @map("period_start") @db.Timestamptz(3)
+  periodEnd   DateTime           @map("period_end") @db.Timestamptz(3)
+  status      WeeklyReportStatus @default(PENDING)
+  content     Json?
+  model       String
+  batchId     String?            @map("batch_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  readyAt     DateTime?          @map("ready_at")
+  /// 完成メールを送った時刻（送り漏れを Cron で再送するため）
+  notifiedAt  DateTime?          @map("notified_at")
+  child       Child              @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, periodEnd])
+  @@index([status, batchId])
+  @@map("weekly_reports")
 }

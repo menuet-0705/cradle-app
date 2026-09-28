@@ -16,6 +16,35 @@ enum RecordType {
       values.firstWhere((t) => t.apiValue == value);
 }
 
+/// 食事の「食べた量」
+enum MealAmount {
+  all('ALL', 'ぜんぶ'),
+  half('HALF', '半分'),
+  little('LITTLE', '少し'),
+  none('NONE', '食べない');
+
+  const MealAmount(this.apiValue, this.label);
+  final String apiValue;
+  final String label;
+
+  static MealAmount? fromApi(Object? v) =>
+      values.where((e) => e.apiValue == v).firstOrNull;
+}
+
+/// 食事の「反応」
+enum MealReaction {
+  liked('LIKED', '好き'),
+  neutral('NEUTRAL', 'ふつう'),
+  disliked('DISLIKED', '苦手');
+
+  const MealReaction(this.apiValue, this.label);
+  final String apiValue;
+  final String label;
+
+  static MealReaction? fromApi(Object? v) =>
+      values.where((e) => e.apiValue == v).firstOrNull;
+}
+
 class GrowthRecord {
   const GrowthRecord({
     required this.id,
@@ -25,6 +54,8 @@ class GrowthRecord {
     this.amountMl,
     this.weightG,
     this.note,
+    this.mealAmount,
+    this.mealReaction,
     this.createdByName,
   });
 
@@ -38,6 +69,8 @@ class GrowthRecord {
     amountMl: json['amountMl'] as int?,
     weightG: json['weightG'] as int?,
     note: json['note'] as String?,
+    mealAmount: MealAmount.fromApi(json['mealAmount']),
+    mealReaction: MealReaction.fromApi(json['mealReaction']),
     createdByName:
         (json['createdBy'] as Map<String, dynamic>?)?['name'] as String?,
   );
@@ -49,6 +82,8 @@ class GrowthRecord {
   final int? amountMl;
   final int? weightG;
   final String? note;
+  final MealAmount? mealAmount;
+  final MealReaction? mealReaction;
   final String? createdByName;
 
   /// 一覧に出す要約
@@ -56,7 +91,11 @@ class GrowthRecord {
     RecordType.milk => '${amountMl ?? 0} ml',
     RecordType.sleep => _duration(endedAt!.difference(startedAt)),
     RecordType.weight => '${((weightG ?? 0) / 1000).toStringAsFixed(2)} kg',
-    RecordType.meal => note ?? '',
+    RecordType.meal => [
+      note ?? '',
+      if (mealAmount != null) '（${mealAmount!.label}）',
+      if (mealReaction != null) ' ${mealReaction!.label}',
+    ].join(),
   };
 
   static String _duration(Duration d) {
@@ -75,6 +114,8 @@ class NewRecord {
     this.amountMl,
     this.weightG,
     this.note,
+    this.mealAmount,
+    this.mealReaction,
   });
 
   final RecordType type;
@@ -83,6 +124,8 @@ class NewRecord {
   final int? amountMl;
   final int? weightG;
   final String? note;
+  final MealAmount? mealAmount;
+  final MealReaction? mealReaction;
 
   Map<String, dynamic> toJson() => {
     'type': type.apiValue,
@@ -92,5 +135,7 @@ class NewRecord {
     'amountMl': ?amountMl,
     'weightG': ?weightG,
     if (note != null && note!.isNotEmpty) 'note': note,
+    'mealAmount': ?mealAmount?.apiValue,
+    'mealReaction': ?mealReaction?.apiValue,
   };
 }

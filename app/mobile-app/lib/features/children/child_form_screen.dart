@@ -20,6 +20,9 @@ class ChildFormScreen extends ConsumerStatefulWidget {
 class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
   final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.child?.name);
+  late final _avoidFoods = TextEditingController(
+    text: widget.child?.avoidFoods,
+  );
   late DateTime? _birthDate = widget.child?.birthDate;
   late Sex? _sex = widget.child?.sex;
   bool _saving = false;
@@ -27,6 +30,7 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
   @override
   void dispose() {
     _name.dispose();
+    _avoidFoods.dispose();
     super.dispose();
   }
 
@@ -56,6 +60,7 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
               name: _name.text.trim(),
               birthDate: _birthDate!,
               sex: _sex,
+              avoidFoods: _avoidFoods.text.trim(),
               // 複数の家族に所属している場合は、いま見ているこどもと同じ家族に登録する
               familyId: ref.read(selectedChildProvider).value?.familyId,
             )
@@ -64,6 +69,7 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
               name: _name.text.trim(),
               birthDate: _birthDate!,
               sex: _sex,
+              avoidFoods: _avoidFoods.text.trim(),
             );
       ref.read(selectedChildIdProvider.notifier).select(saved.id);
       ref.invalidate(childrenProvider);
@@ -129,6 +135,17 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
               ],
               selected: {_sex},
               onSelectionChanged: (s) => setState(() => _sex = s.first),
+            ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _avoidFoods,
+              decoration: const InputDecoration(
+                labelText: 'アレルギー・避けたい食材（任意）',
+                hintText: '例: 卵、えび',
+                helperText: '食事の提案では、ここに書いた食材を使いません',
+              ),
+              maxLength: 500,
+              maxLines: 2,
             ),
             const SizedBox(height: 32),
             FilledButton(

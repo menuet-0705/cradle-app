@@ -23,11 +23,12 @@ class ChildrenRepository {
     required String name,
     required DateTime birthDate,
     Sex? sex,
+    String? avoidFoods,
     String? familyId,
   }) async {
     final res = await _dio.post<Map<String, dynamic>>(
       '/children',
-      data: {..._body(name, birthDate, sex), 'familyId': ?familyId},
+      data: {..._body(name, birthDate, sex, avoidFoods), 'familyId': ?familyId},
     );
     return Child.fromJson(res.data!);
   }
@@ -37,18 +38,26 @@ class ChildrenRepository {
     required String name,
     required DateTime birthDate,
     Sex? sex,
+    String? avoidFoods,
   }) async {
     final res = await _dio.patch<Map<String, dynamic>>(
       '/children/$id',
-      data: _body(name, birthDate, sex),
+      data: _body(name, birthDate, sex, avoidFoods),
     );
     return Child.fromJson(res.data!);
   }
 
-  Map<String, dynamic> _body(String name, DateTime birthDate, Sex? sex) => {
+  Map<String, dynamic> _body(
+    String name,
+    DateTime birthDate,
+    Sex? sex,
+    String? avoidFoods,
+  ) => {
     'name': name,
     'birthDate': _date.format(birthDate),
     'sex': sex?.name.toUpperCase(),
+    // 空文字はサーバー側で「未設定」として扱う
+    'avoidFoods': avoidFoods ?? '',
   };
 }
 
