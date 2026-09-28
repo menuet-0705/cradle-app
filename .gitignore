@@ -1,0 +1,14 @@
+# secrets（値はリポジトリに置かない。キー一覧は app/backend/.env.example）
+.env
+.env.*
+!.env.example
+.env.keys
+
+.DS_Store
+.vercel
+
+# backend
+app/backend/node_modules/
+app/backend/dist/
+app/backend/coverage/
+app/backend/src/generated/

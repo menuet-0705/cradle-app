@@ -1,0 +1,9 @@
+# ビルドに不要なもの・秘密情報を Vercel にアップロードしない
+.env
+.env.*
+!.env.example
+.env.keys
+node_modules
+dist
+coverage
+test

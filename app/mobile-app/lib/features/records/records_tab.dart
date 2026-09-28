@@ -1,0 +1,147 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+
+import '../../core/api_client.dart';
+import 'growth_record.dart';
+import 'records_providers.dart';
+
+/// 選択中の日の記録一覧
+class RecordsTab extends ConsumerWidget {
+  const RecordsTab({super.key, required this.childId});
+
+  final String childId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final day = ref.watch(selectedDayProvider) ?? today();
+    final records = ref.watch(dayRecordsProvider((childId: childId, day: day)));
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: '前の日',
+                icon: const Icon(Icons.chevron_left),
+                onPressed: () =>
+                    ref.read(selectedDayProvider.notifier).shift(-1),
+              ),
+              Expanded(
+                child: Text(
+                  DateFormat('M月d日(E)', 'ja').format(day),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: '次の日',
+                icon: const Icon(Icons.chevron_right),
+                onPressed: day.isBefore(today())
+                    ? () => ref.read(selectedDayProvider.notifier).shift(1)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => ref.refresh(
+              dayRecordsProvider((childId: childId, day: day)).future,
+            ),
+            child: records.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _Message(errorMessage(e)),
+              data: (items) => items.isEmpty
+                  ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
+                  : ListView.separated(
+                      padding: const EdgeInsets.only(bottom: 96),
+                      itemCount: items.length,
+                      separatorBuilder: (_, _) => const Divider(height: 1),
+                      itemBuilder: (_, i) => _RecordTile(record: items[i]),
+                    ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _RecordTile extends ConsumerWidget {
+  const _RecordTile({required this.record});
+
+  final GrowthRecord record;
+
+  Future<void> _delete(BuildContext context, WidgetRef ref) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('記録を削除しますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await ref.read(recordsRepositoryProvider).delete(record.id);
+      invalidateRecords(ref);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessage(e))));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final time = DateFormat.Hm();
+    final timeLabel = record.endedAt == null
+        ? time.format(record.startedAt)
+        : '${time.format(record.startedAt)}〜${time.format(record.endedAt!)}';
+    final note = record.type == RecordType.meal ? null : record.note;
+    return ListTile(
+      leading: CircleAvatar(child: Icon(record.type.icon)),
+      title: Text('${record.type.label}  ${record.summary}'),
+      subtitle: Text(
+        [timeLabel, ?note, ?record.createdByName].join('  ·  '),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: IconButton(
+        tooltip: '削除',
+        icon: const Icon(Icons.delete_outline),
+        onPressed: () => _delete(context, ref),
+      ),
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    // RefreshIndicator を効かせるためスクロール可能にしておく
+    return ListView(
+      children: [
+        const SizedBox(height: 120),
+        Text(text, textAlign: TextAlign.center),
+      ],
+    );
+  }
+}

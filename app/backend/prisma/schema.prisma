@@ -1,0 +1,110 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String         @id @default(uuid()) @db.Uuid
+  email         String         @unique
+  passwordHash  String         @map("password_hash")
+  name          String
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  memberships   FamilyMember[]
+  refreshTokens RefreshToken[]
+  records       Record[]
+
+  @@map("users")
+}
+
+model Family {
+  id        String         @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime       @default(now()) @map("created_at")
+  members   FamilyMember[]
+  children  Child[]
+
+  @@map("families")
+}
+
+enum FamilyRole {
+  OWNER
+  MEMBER
+}
+
+model FamilyMember {
+  familyId  String     @map("family_id") @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  role      FamilyRole @default(MEMBER)
+  createdAt DateTime   @default(now()) @map("created_at")
+  family    Family     @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([familyId, userId])
+  @@index([userId])
+  @@map("family_members")
+}
+
+enum Sex {
+  MALE
+  FEMALE
+}
+
+model Child {
+  id        String   @id @default(uuid()) @db.Uuid
+  familyId  String   @map("family_id") @db.Uuid
+  name      String
+  birthDate DateTime @map("birth_date") @db.Date
+  sex       Sex?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  records   Record[]
+
+  @@index([familyId])
+  @@map("children")
+}
+
+enum RecordType {
+  MILK
+  SLEEP
+  WEIGHT
+  MEAL
+}
+
+model Record {
+  id          String     @id @default(uuid()) @db.Uuid
+  childId     String     @map("child_id") @db.Uuid
+  createdById String?    @map("created_by_id") @db.Uuid
+  type        RecordType
+  startedAt   DateTime   @map("started_at") @db.Timestamptz(3)
+  endedAt     DateTime?  @map("ended_at") @db.Timestamptz(3)
+  amountMl    Int?       @map("amount_ml")
+  weightG     Int?       @map("weight_g")
+  note        String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+  child       Child      @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy   User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([childId, startedAt])
+  @@index([childId, type, startedAt])
+  @@map("records")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
