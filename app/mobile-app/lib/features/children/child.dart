@@ -3,6 +3,7 @@ enum Sex { male, female }
 class Child {
   const Child({
     required this.id,
+    this.familyId,
     required this.name,
     required this.birthDate,
     this.sex,
@@ -10,6 +11,7 @@ class Child {
 
   factory Child.fromJson(Map<String, dynamic> json) => Child(
     id: json['id'] as String,
+    familyId: json['familyId'] as String?,
     name: json['name'] as String,
     // サーバーは日付を UTC 0時で返すので、日付部分だけ取り出してローカル日付にする
     birthDate: DateTime.parse((json['birthDate'] as String).substring(0, 10)),
@@ -21,6 +23,7 @@ class Child {
   );
 
   final String id;
+  final String? familyId;
   final String name;
   final DateTime birthDate;
   final Sex? sex;

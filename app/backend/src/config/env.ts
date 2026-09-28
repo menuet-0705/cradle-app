@@ -20,6 +20,20 @@ const envSchema = z.object({
     .max(3600)
     .default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  // ---- メール（家族招待）。3 つとも設定されたときだけ招待メールを送れる ----
+  // ローカル: smtp://localhost:1025（Mailpit）/ 本番: smtps://resend:<API キー>@smtp.resend.com:465
+  SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
+  // 例: すくすく記録 <no-reply@example.com>
+  MAIL_FROM: z
+    .string()
+    .max(200)
+    .regex(/^(?:[^<>\r\n]*<[^\s@<>]+@[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+)$/)
+    .optional(),
+  // 招待リンクの起点（Web の公開 URL）。例: http://localhost:8080 / https://<domain>
+  APP_URL: z
+    .url({ protocol: /^https?$/ })
+    .transform((v) => v.replace(/\/+$/, ''))
+    .optional(),
   CORS_ORIGINS: z
     .string()
     .default('')
@@ -36,6 +50,8 @@ export type AppConfig = Omit<z.infer<typeof envSchema>, 'DB_POOL_MAX'> & {
   isVercel: boolean;
   /** DATABASE_URL の `?schema=` で指定したスキーマ（既定 public） */
   dbSchema: string;
+  /** メール送信の設定。未設定なら招待メールは送れない */
+  mail?: { smtpUrl: string; from: string; appUrl: string };
 };
 
 // 生 SQL に埋め込むため、識別子として安全な文字だけを許可する
@@ -71,6 +87,26 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     PLACEHOLDER_SECRET.test(config.JWT_ACCESS_SECRET)
   ) {
     throw new Error('JWT_ACCESS_SECRET must not be a placeholder value');
+  }
+  const { SMTP_URL, MAIL_FROM, APP_URL } = config;
+  const mailKeys = [SMTP_URL, MAIL_FROM, APP_URL].filter(Boolean).length;
+  // 一部だけ設定されているのは設定漏れなので、黙って無効にせず起動を止める
+  if (mailKeys > 0 && mailKeys < 3) {
+    throw new Error(
+      'Invalid environment variables: SMTP_URL, MAIL_FROM and APP_URL must be set together',
+    );
+  }
+  if (SMTP_URL && MAIL_FROM && APP_URL) {
+    // 招待リンクを平文 HTTP で配らない（ローカル以外）
+    if (
+      (config.NODE_ENV === 'production' || isVercel) &&
+      !APP_URL.startsWith('https://')
+    ) {
+      throw new Error(
+        'Invalid environment variables: APP_URL (https required)',
+      );
+    }
+    config.mail = { smtpUrl: SMTP_URL, from: MAIL_FROM, appUrl: APP_URL };
   }
   return config;
 }

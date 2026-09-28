@@ -19,6 +19,10 @@ export default defineConfig({
       DATABASE_URL: TEST_DATABASE_URL,
       DIRECT_URL: TEST_DATABASE_URL,
       JWT_ACCESS_SECRET: 'test-access-secret-0123456789-0123456789',
+      // 送信処理はテストで差し替えるので、実際には接続しない
+      SMTP_URL: 'smtp://localhost:1025',
+      MAIL_FROM: 'すくすく記録 <no-reply@cradle.test>',
+      APP_URL: 'http://localhost:8080',
     },
   },
 });

@@ -7,7 +7,7 @@
 |---|---|
 | `app/mobile-app/` | Flutter（iOS / Android / Web） |
 | `app/backend/` | NestJS API + Prisma。Web 版も同じ Vercel プロジェクトで配信 |
-| `docker-compose.yml` | ローカル用 PostgreSQL |
+| `docker-compose.yml` | ローカル用 PostgreSQL・Mailpit（メール確認用） |
 
 ## 環境の考え方
 
@@ -16,6 +16,7 @@
 | | ローカル | 検証/本番 |
 |---|---|---|
 | DB | Docker の Postgres 17 | Supabase Postgres |
+| メール（家族招待） | Docker の Mailpit（外部に届かない。http://localhost:8025 で確認） | Resend（SMTP） |
 | API | `npm run start:dev` | Vercel |
 | API の環境変数 | `app/backend/.env`（`.env.example` をコピー） | Vercel の Environment Variables |
 | モバイルの接続先 | 既定値（`http://localhost:3000/api/v1`、Android エミュレータは `10.0.2.2`） | `--dart-define=API_BASE_URL=https://...` |
@@ -28,7 +29,7 @@
 必要なもの: Node.js 22+、Docker、Flutter 3.47+、Xcode（iOS）/ Android Studio（Android）
 
 ```sh
-# 1. DB
+# 1. DB・メール確認用サーバー（Mailpit: http://localhost:8025）
 docker compose up -d --wait
 
 # 2. API
@@ -82,6 +83,12 @@ API_CONTRACT_BASE_URL=http://localhost:3000/api/v1 flutter test test/api_contrac
    DIRECT_URL='postgresql://...:5432/postgres' npm run db:migrate:deploy
    ```
 
+### Resend（招待メールの送信）
+1. https://resend.com でアカウントを作成
+2. Domains で送信元ドメインを追加し、表示される DNS レコード（SPF / DKIM）を登録して認証する
+   - 認証前は自分のアドレス宛てにしか送れません
+3. API Keys で「Sending access」のキーを作成し、Vercel の `SMTP_URL` に設定する（リポジトリには置かない）
+
 ### Vercel（API と Web を1プロジェクトでデプロイ）
 
 ```
@@ -98,6 +105,10 @@ https://<domain>/api/v1/*  → NestJS（Vercel Function）
    - `JWT_ACCESS_SECRET`（`openssl rand -base64 48` などで生成。環境ごとに別の値）
    - 必要に応じて `JWT_ACCESS_TTL_SECONDS` / `REFRESH_TOKEN_TTL_DAYS`
    - `CORS_ORIGINS` は不要（Web と API が同一オリジンのため）
+   - 家族招待のメール（3 つとも設定したときだけ有効。未設定なら招待の送信は 503）
+     - `SMTP_URL=smtps://resend:<Resend の API キー>@smtp.resend.com:465`
+     - `MAIL_FROM=すくすく記録 <no-reply@<認証済みドメイン>>`
+     - `APP_URL=https://<domain>`（招待リンクの起点。https 必須）
 3. ビルドでは API のビルドに続けて `scripts/build-web.sh` が Flutter（バージョン固定）を取得し、Web をビルドします（数分かかります）
 4. Preview デプロイは誰でもアクセスできるため、Deployment Protection を有効にし、Preview 用の環境変数（DB・秘密鍵）は本番と分ける
 5. デプロイ後の確認
@@ -129,4 +140,9 @@ flutter build appbundle --dart-define=API_BASE_URL=https://<domain>/api/v1
 | DELETE | `/records/:id` | 記録削除 |
 | GET | `/children/:id/stats/weight` | 体重の推移 |
 | GET | `/children/:id/stats/milk-daily` | 1日ごとのミルク量（`from` `to` `tz`） |
+| GET | `/families` | 所属する家族とメンバー |
+| POST / GET | `/families/:id/invites` | 招待メールの送信（`email`）/ 招待中の一覧 |
+| DELETE | `/families/:id/invites/:inviteId` | 招待の取り消し |
+| DELETE | `/families/:id/members/:userId` | メンバーを外す（管理者）/ 自分なら退出 |
+| POST | `/invites/preview` `/invites/accept` | 招待コードの確認 / 参加（`code`。招待されたアドレスのユーザーのみ） |
 | GET | `/health` | ヘルスチェック |
