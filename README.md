@@ -42,6 +42,18 @@ flutter pub get
 flutter run
 ```
 
+### ブラウザで確認する（Xcode / Android SDK がない場合）
+
+見た目・動作確認用です。スマホ固有の挙動（通知など）は確認できません。
+
+```sh
+# API はブラウザのオリジンを許可して起動（.env は変更不要）
+cd app/backend && CORS_ORIGINS=http://localhost:8080 npm run start:dev
+
+# 別ターミナルで
+cd app/mobile-app && flutter run -d chrome --web-port 8080
+```
+
 ## テスト
 
 ```sh
