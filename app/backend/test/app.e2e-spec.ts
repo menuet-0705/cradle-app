@@ -1,18 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { ThrottlerStorage, ThrottlerStorageService } from '@nestjs/throttler';
 import request from 'supertest';
 import { configureApp } from '../src/app.factory.js';
 import { AppModule } from '../src/app.module.js';
+import { RateLimitStore } from '../src/common/rate-limit.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 
 describe('cradle API (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
-  let throttler = new ThrottlerStorageService();
-  const throttlerStorage: ThrottlerStorage = {
-    increment: (...args) => throttler.increment(...args),
-  };
 
   const api = () => request(app.getHttpServer());
   let seq = 0;
@@ -29,10 +25,7 @@ describe('cradle API (e2e)', () => {
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
-    })
-      .overrideProvider(ThrottlerStorage)
-      .useValue(throttlerStorage)
-      .compile();
+    }).compile();
     app = configureApp(moduleRef.createNestApplication());
     await app.init();
     prisma = app.get(PrismaService);
@@ -46,12 +39,10 @@ describe('cradle API (e2e)', () => {
 
   // 認証 API のレート制限（1分10回）にテスト自体が引っかからないよう、テストごとに作り直す
   beforeEach(() => {
-    throttler.onApplicationShutdown();
-    throttler = new ThrottlerStorageService();
+    app.get(RateLimitStore).clear();
   });
 
   afterAll(async () => {
-    throttler.onApplicationShutdown();
     await app.close();
   });
 
@@ -123,6 +114,16 @@ describe('cradle API (e2e)', () => {
         .post('/api/v1/auth/refresh')
         .send({ refreshToken: latest })
         .expect(401);
+    });
+
+    it('rate-limits login attempts per IP', async () => {
+      const attempt = () =>
+        api()
+          .post('/api/v1/auth/login')
+          .send({ email: 'nobody@example.com', password: 'wrong-password' });
+      for (let i = 0; i < 10; i++) await attempt().expect(401);
+      const blocked = await attempt().expect(429);
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
     });
 
     describe('web (cookie mode)', () => {

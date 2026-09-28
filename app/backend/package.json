@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "build": "prisma generate && nest build",
+    "build": "prisma generate && nest build && node scripts/check-esm-compat.mjs",
     "build:web": "bash scripts/build-web.sh",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -32,7 +32,6 @@
     "@nestjs/core": "^12.0.1",
     "@nestjs/jwt": "^12.0.2",
     "@nestjs/platform-express": "^12.0.1",
-    "@nestjs/throttler": "^6.7.1",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "helmet": "^8.3.0",

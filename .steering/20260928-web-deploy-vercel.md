@@ -91,6 +91,19 @@ https://<domain>/api/v1/*  → NestJS（Vercel Function）
 - 初回訪問時の `401 /auth/refresh`（Cookie がないため。コンソールにエラー表示が出る）
 - Flutter SDK（約 1.1GB）は Vercel のビルドキャッシュ上限を超える可能性があり、毎回取得になる場合がある（ビルド +1〜2 分）
 
+### デプロイ後の不具合: Web の新規登録で ERR_REQUIRE_ESM（2026-09-28）
+- 原因: `@nestjs/throttler`（CommonJS）が ESM 専用の NestJS 12 を `require()` している。手元の Node 22 は require(esm) に対応しているため動いたが、Vercel の実行環境のローダーは非対応で起動時に失敗
+- 検証の穴: 手元の Node だけで確認しており、Vercel の実行環境との差（require(esm)）を検証していなかった
+- 対応:
+  - `@nestjs/throttler` を削除し、同等の簡易レート制限（IP × エンドポイント、固定ウィンドウ）を ESM で自前実装（`src/common/rate-limit.ts`）。429 のテストを追加
+  - `npm run build` に `scripts/check-esm-compat.mjs` を追加。require(esm) を無効にした Node で全モジュールを読み込み、同種の依存が入ったらビルドで失敗させる
+- 確認: require(esm) 無効の Node で Vercel ハンドラを起動し、Web からの新規登録が 201 / Cookie 発行
+- レビュー（2 ラウンド、最終的に Critical/High/Medium なし）で反映:
+  - レート制限のメモリ上限（5 万キー、古いものから破棄）と期限切れ掃除の間隔制限（全走査は 60 秒に 1 回まで）
+  - IPv6 は /64 単位で集計（アドレスを変えながらの回避対策）、不正な形式・IPv4 埋め込みはそのまま扱う
+  - 互換チェックは import だけでなく app.init() まで実行（本番と同じ NODE_ENV、60 秒でタイムアウト）。わざと問題のある依存を入れて検出されることを確認
+- 後続: ログインのアカウント単位の制限（複数 IP からの総当たり対策）
+
 ### 後続で検討
 - [ ] 初回訪問時の 401 をコンソールに出さない工夫（ログイン有無を示す非 HttpOnly の目印 Cookie など）
 - [ ] 独自ドメインを付ける場合の HSTS（includeSubDomains / preload）の方針
