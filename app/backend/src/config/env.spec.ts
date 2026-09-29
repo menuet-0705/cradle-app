@@ -54,31 +54,98 @@ describe('loadConfig', () => {
     );
   });
 
-  it('enables mail when SMTP_URL, MAIL_FROM and APP_URL are all set', () => {
+  it('uses Resend when RESEND_API_KEY is set (production)', () => {
+    const mail = {
+      RESEND_API_KEY: 're_test_key',
+      EMAIL_FROM: 'すくすく記録 <no-reply@example.com>',
+      APP_URL: 'https://example.com/',
+    };
+    expect(loadConfig({ ...base, ...mail }).mail).toEqual({
+      transport: { type: 'resend', apiKey: 're_test_key' },
+      from: mail.EMAIL_FROM,
+      appUrl: 'https://example.com',
+    });
+    // Resend のキーの形式でなければ拒否
+    for (const key of ['sk-xxx', 're_', 're_short']) {
+      expect(() =>
+        loadConfig({ ...base, ...mail, RESEND_API_KEY: key }),
+      ).toThrow(/RESEND_API_KEY/);
+    }
+    // ローカルで両方あると、Mailpit のつもりで実際に送ってしまうので拒否
+    expect(() =>
+      loadConfig({ ...base, ...mail, SMTP_URL: 'smtp://localhost:1025' }),
+    ).toThrow(/not both/);
+    // 本番では Resend を優先（旧設定の SMTP_URL が残っていても動く）
+    expect(
+      loadConfig({
+        ...base,
+        ...mail,
+        NODE_ENV: 'production',
+        SMTP_URL: 'smtps://resend:x@smtp.resend.com:465',
+      }).mail?.transport.type,
+    ).toBe('resend');
+  });
+
+  it('requires smtps for SMTP in production', () => {
+    const mail = {
+      EMAIL_FROM: 'a <a@example.com>',
+      APP_URL: 'https://example.com',
+      NODE_ENV: 'production',
+    };
+    expect(() =>
+      loadConfig({ ...base, ...mail, SMTP_URL: 'smtp://mail.example.com' }),
+    ).toThrow(/smtps required/);
+  });
+
+  it('uses SMTP (Mailpit) when only SMTP_URL is set (local)', () => {
     const mail = {
       SMTP_URL: 'smtp://localhost:1025',
-      MAIL_FROM: 'すくすく記録 <no-reply@example.com>',
+      EMAIL_FROM: 'すくすく記録 <no-reply@example.com>',
       APP_URL: 'http://localhost:8080/',
     };
     expect(loadConfig(base).mail).toBeUndefined();
+    expect(loadConfig({ ...base, ...mail }).mail).toEqual({
+      transport: { type: 'smtp', url: 'smtp://localhost:1025' },
+      from: mail.EMAIL_FROM,
+      appUrl: 'http://localhost:8080',
+    });
+    // 旧名の MAIL_FROM も読む（既存の .env の互換）
+    const { EMAIL_FROM: _omit, ...legacy } = mail;
+    expect(
+      loadConfig({ ...base, ...legacy, MAIL_FROM: mail.EMAIL_FROM }).mail?.from,
+    ).toBe(mail.EMAIL_FROM);
+  });
+
+  it('rejects partial or invalid mail settings', () => {
+    const key = 're_abcdefgh123';
     // 一部だけの設定は設定漏れとして起動を止める
-    expect(() => loadConfig({ ...base, SMTP_URL: mail.SMTP_URL })).toThrow(
+    expect(() => loadConfig({ ...base, RESEND_API_KEY: key })).toThrow(
       /must be set together/,
     );
     expect(() =>
-      loadConfig({ ...base, ...mail, MAIL_FROM: 'not an address' }),
-    ).toThrow(/MAIL_FROM/);
-    expect(loadConfig({ ...base, ...mail }).mail).toEqual({
-      smtpUrl: 'smtp://localhost:1025',
-      from: mail.MAIL_FROM,
-      appUrl: 'http://localhost:8080',
-    });
+      loadConfig({
+        ...base,
+        RESEND_API_KEY: key,
+        APP_URL: 'https://example.com',
+        EMAIL_FROM: 'not an address',
+      }),
+    ).toThrow(/EMAIL_FROM/);
+    // 旧名の MAIL_FROM は EMAIL_FROM があれば無視する（形式が古くても起動を止めない）
+    expect(
+      loadConfig({
+        ...base,
+        RESEND_API_KEY: key,
+        APP_URL: 'https://example.com',
+        EMAIL_FROM: 'a <a@example.com>',
+        MAIL_FROM: 'broken',
+      }).mail?.from,
+    ).toBe('a <a@example.com>');
   });
 
   it('requires https APP_URL in production', () => {
     const mail = {
-      SMTP_URL: 'smtps://resend:key@smtp.resend.com:465',
-      MAIL_FROM: 'a <a@example.com>',
+      RESEND_API_KEY: 're_test_key',
+      EMAIL_FROM: 'a <a@example.com>',
       APP_URL: 'http://example.com',
     };
     expect(() =>

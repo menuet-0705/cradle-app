@@ -16,7 +16,7 @@
 | | ローカル | 検証/本番 |
 |---|---|---|
 | DB | Docker の Postgres 17 | Supabase Postgres |
-| メール（家族招待） | Docker の Mailpit（外部に届かない。http://localhost:8025 で確認） | Resend（SMTP） |
+| メール（家族招待） | Docker の Mailpit に SMTP で送る（`SMTP_URL`。外部に届かない。http://localhost:8025 で確認） | Resend の API（`RESEND_API_KEY`、公式 SDK） |
 | API | `npm run start:dev` | Vercel |
 | API の環境変数 | `app/backend/.env`（`.env.example` をコピー） | Vercel の Environment Variables |
 | モバイルの接続先 | 既定値（`http://localhost:3000/api/v1`、Android エミュレータは `10.0.2.2`） | `--dart-define=API_BASE_URL=https://...` |
@@ -87,7 +87,7 @@ API_CONTRACT_BASE_URL=http://localhost:3000/api/v1 flutter test test/api_contrac
 1. https://resend.com でアカウントを作成
 2. Domains で送信元ドメインを追加し、表示される DNS レコード（SPF / DKIM）を登録して認証する
    - 認証前は自分のアドレス宛てにしか送れません
-3. API Keys で「Sending access」のキーを作成し、Vercel の `SMTP_URL` に設定する（リポジトリには置かない）
+3. API Keys で「Sending access」のキーを作成し、Vercel の `RESEND_API_KEY` に設定する（リポジトリには置かない）
 
 ### Vercel（API と Web を1プロジェクトでデプロイ）
 
@@ -106,8 +106,10 @@ https://<domain>/api/v1/*  → NestJS（Vercel Function）
    - 必要に応じて `JWT_ACCESS_TTL_SECONDS` / `REFRESH_TOKEN_TTL_DAYS`
    - `CORS_ORIGINS` は不要（Web と API が同一オリジンのため）
    - 家族招待のメール（3 つとも設定したときだけ有効。未設定なら招待の送信は 503）
-     - `SMTP_URL=smtps://resend:<Resend の API キー>@smtp.resend.com:465`
-     - `MAIL_FROM=すくすく記録 <no-reply@<認証済みドメイン>>`
+     - `RESEND_API_KEY=re_...`（Resend の API キー。設定すると Resend の API で送る。`SMTP_URL` は不要）
+     - `EMAIL_FROM=すくすく記録 <no-reply@<認証済みドメイン>>`
+     - 以前の設定（`SMTP_URL` / `MAIL_FROM`）が残っていれば削除してよい（残っていても `RESEND_API_KEY` と `EMAIL_FROM` が優先される）
+     - `NODE_ENV=production` を必ず設定する（Resend の SDK は production 以外では送信エラーの内容〈宛先を含むことがある〉をログに出すため）
      - `APP_URL=https://<domain>`（招待リンクの起点。https 必須）
 3. ビルドでは API のビルドに続けて `scripts/build-web.sh` が Flutter（バージョン固定）を取得し、Web をビルドします（数分かかります）
 4. Preview デプロイは誰でもアクセスできるため、Deployment Protection を有効にし、Preview 用の環境変数（DB・秘密鍵）は本番と分ける

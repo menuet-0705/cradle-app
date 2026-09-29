@@ -139,3 +139,12 @@ model FamilyInvite {
 ## デプロイ時に必要な作業（利用者側）
 - Resend のアカウント作成・送信元ドメインの認証（DNS に SPF/DKIM を追加）。未認証だと自分宛てにしか送れない
 - Vercel に `SMTP_URL`（`smtps://resend:<API キー>@smtp.resend.com:465`）/ `MAIL_FROM` / `APP_URL` を設定
+
+## 追記（2026-09-29）: 本番のメール送信を Resend の公式 SDK に変更
+- 本番: `RESEND_API_KEY` + `EMAIL_FROM` + `APP_URL` → `resend`（6.30.0 に固定）で送信。接続先は `https://api.resend.com` に固定（`RESEND_BASE_URL` を読ませない）
+- ローカル: `RESEND_API_KEY` を設定せず `SMTP_URL`（Mailpit）。両方の設定はローカルでは起動エラー（実際に送ってしまう事故の防止）、本番の SMTP は smtps のみ
+- `MAIL_FROM` は旧名として `EMAIL_FROM` がないときだけ読む
+- 送信は 8 秒で打ち切る（SDK の第 2 引数から fetch に `signal` を渡す）。打ち切りは「届いたかもしれない」ので招待を残す（`MailDeliveryUnknownError`）。確実な失敗のときだけ招待を消す
+- 検証: unit 24・e2e 23 pass。実 SDK をローカルの模擬サーバーに向けて `POST /emails`・認証ヘッダー・本文、エラー→503、打ち切り（約 0.3 秒で接続が切れる）を確認。ローカル SMTP で Mailpit に届くことも確認
+- レビュー: code-reviewer / security-reviewer 各 2 ラウンド、Critical/High/Medium なし
+- 受け入れた Low: 時間切れのとき同じ宛先の古い招待は次の送信まで有効 / 再試行で同じメールが 2 通届きうる（冪等キー未対応。上限で数えるので乱用は抑えられる）

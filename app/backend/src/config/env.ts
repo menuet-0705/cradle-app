@@ -1,5 +1,10 @@
 import { z } from 'zod';
 
+const emailFrom = z
+  .string()
+  .max(200)
+  .regex(/^(?:[^<>\r\n]*<[^\s@<>]+@[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+)$/);
+
 // 環境差異は全てここに集約する。ローカル/検証/本番でコードは同一、値だけが違う。
 const envSchema = z.object({
   NODE_ENV: z
@@ -20,15 +25,18 @@ const envSchema = z.object({
     .max(3600)
     .default(900),
   REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().default(30),
-  // ---- メール（家族招待）。3 つとも設定されたときだけ招待メールを送れる ----
-  // ローカル: smtp://localhost:1025（Mailpit）/ 本番: smtps://resend:<API キー>@smtp.resend.com:465
-  SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
-  // 例: すくすく記録 <no-reply@example.com>
-  MAIL_FROM: z
+  // ---- メール（家族招待）。送信手段・差出人・APP_URL がそろったときだけ送れる ----
+  // 送信手段: 本番は Resend（RESEND_API_KEY）。ローカルは SMTP_URL で Mailpit（外部に届かない）
+  RESEND_API_KEY: z
     .string()
-    .max(200)
-    .regex(/^(?:[^<>\r\n]*<[^\s@<>]+@[^\s@<>]+>|[^\s@<>]+@[^\s@<>]+)$/)
+    .trim()
+    .regex(/^re_[A-Za-z0-9_]{8,}$/)
     .optional(),
+  SMTP_URL: z.url({ protocol: /^smtps?$/ }).optional(),
+  // 差出人。例: すくすく記録 <no-reply@example.com>
+  EMAIL_FROM: emailFrom.optional(),
+  // 旧名（互換のため EMAIL_FROM がないときだけ読む。形式の検証もそのときに行う）
+  MAIL_FROM: z.string().optional(),
   // 招待リンクの起点（Web の公開 URL）。例: http://localhost:8080 / https://<domain>
   APP_URL: z
     .url({ protocol: /^https?$/ })
@@ -51,8 +59,12 @@ export type AppConfig = Omit<z.infer<typeof envSchema>, 'DB_POOL_MAX'> & {
   /** DATABASE_URL の `?schema=` で指定したスキーマ（既定 public） */
   dbSchema: string;
   /** メール送信の設定。未設定なら招待メールは送れない */
-  mail?: { smtpUrl: string; from: string; appUrl: string };
+  mail?: { transport: MailTransport; from: string; appUrl: string };
 };
+
+/** 送信手段。RESEND_API_KEY があれば Resend、なければ SMTP（ローカルの Mailpit） */
+export type MailTransport =
+  { type: 'resend'; apiKey: string } | { type: 'smtp'; url: string };
 
 // 生 SQL に埋め込むため、識別子として安全な文字だけを許可する
 const SCHEMA_NAME = /^[A-Za-z_][A-Za-z0-9_-]{0,62}$/;
@@ -88,25 +100,45 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
   ) {
     throw new Error('JWT_ACCESS_SECRET must not be a placeholder value');
   }
-  const { SMTP_URL, MAIL_FROM, APP_URL } = config;
-  const mailKeys = [SMTP_URL, MAIL_FROM, APP_URL].filter(Boolean).length;
+  const { RESEND_API_KEY, SMTP_URL, APP_URL } = config;
+  const deployed = config.NODE_ENV === 'production' || isVercel;
+  let from = config.EMAIL_FROM;
+  if (!from && config.MAIL_FROM) {
+    if (!emailFrom.safeParse(config.MAIL_FROM).success) {
+      throw new Error('Invalid environment variables: MAIL_FROM');
+    }
+    from = config.MAIL_FROM;
+  }
+  if (RESEND_API_KEY && SMTP_URL && !deployed) {
+    // ローカルに本物のキーを置いたまま Mailpit のつもりで試し、実際にメールが送られるのを防ぐ
+    throw new Error(
+      'Invalid environment variables: set either RESEND_API_KEY or SMTP_URL, not both',
+    );
+  }
+  if (SMTP_URL && deployed && !SMTP_URL.startsWith('smtps://')) {
+    // 本番で認証情報・招待コードを暗号化なしで送らない
+    throw new Error('Invalid environment variables: SMTP_URL (smtps required)');
+  }
+  const transport: MailTransport | undefined = RESEND_API_KEY
+    ? { type: 'resend', apiKey: RESEND_API_KEY }
+    : SMTP_URL
+      ? { type: 'smtp', url: SMTP_URL }
+      : undefined;
+  const mailKeys = [transport, from, APP_URL].filter(Boolean).length;
   // 一部だけ設定されているのは設定漏れなので、黙って無効にせず起動を止める
   if (mailKeys > 0 && mailKeys < 3) {
     throw new Error(
-      'Invalid environment variables: SMTP_URL, MAIL_FROM and APP_URL must be set together',
+      'Invalid environment variables: RESEND_API_KEY (or SMTP_URL), EMAIL_FROM and APP_URL must be set together',
     );
   }
-  if (SMTP_URL && MAIL_FROM && APP_URL) {
+  if (transport && from && APP_URL) {
     // 招待リンクを平文 HTTP で配らない（ローカル以外）
-    if (
-      (config.NODE_ENV === 'production' || isVercel) &&
-      !APP_URL.startsWith('https://')
-    ) {
+    if (deployed && !APP_URL.startsWith('https://')) {
       throw new Error(
         'Invalid environment variables: APP_URL (https required)',
       );
     }
-    config.mail = { smtpUrl: SMTP_URL, from: MAIL_FROM, appUrl: APP_URL };
+    config.mail = { transport, from, appUrl: APP_URL };
   }
   return config;
 }

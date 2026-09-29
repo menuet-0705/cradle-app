@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../config/env.js';
 import type { Prisma } from '../generated/prisma/client.js';
-import { MAILER, type Mailer } from '../mail/mailer.js';
+import {
+  MAILER,
+  MailDeliveryUnknownError,
+  type Mailer,
+} from '../mail/mailer.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   generateInviteCode,
@@ -224,8 +228,12 @@ export class FamiliesService {
         }),
       );
     } catch (e) {
-      // 届いていない招待は残さない（古い招待はまだ有効なまま）
-      await this.prisma.familyInvite.delete({ where: { id: invite.id } });
+      // 届いていない招待は残さない（古い招待はまだ有効なまま）。
+      // ただし時間切れは「届いたかもしれない」ので残す（届いたメールのリンクが使えなくならないように。
+      // 送り直せば古い招待は無効になり、送信回数の上限にも数えられる）
+      if (!(e instanceof MailDeliveryUnknownError)) {
+        await this.prisma.familyInvite.delete({ where: { id: invite.id } });
+      }
       throw e;
     }
 
