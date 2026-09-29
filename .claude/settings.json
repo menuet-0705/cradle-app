@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(.env)",
+      "Read(**/.env)",
+      "Read(.env.keys)",
+      "Read(**/credentials.json)",
+      "Bash(dotenvx run:*)",
+      "Bash(printenv:*)",
+      "Bash(env:*)"
+    ]
+  }
+}
