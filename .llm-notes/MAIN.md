@@ -74,4 +74,11 @@
 
 - **Never read `.env` or `.env.keys`**: These hold encrypted secrets and the decryption key. Do not open them with the Read tool, and do not read them via Bash (`cat`, `head`, `tail`, etc.).
 - **Never decrypt or dump secrets**: Do not run `dotenvx run`, `printenv`, `env`, or any command that would expose secret values in output or logs.
-- These rules are also enforced in `.claude/settings.json`; treat this section as the intent behind those deny rules.
+- These rules are also enforced for Claude Code by the deny rules in `.claude/settings.json` and the `.claude/hooks/block-secrets.mjs` hook. Codex has no per-file deny, so this section is the only guard there: follow it strictly.
+
+## Agent Config (Claude Code / Codex)
+
+- `CLAUDE.md` and `AGENTS.md` are symlinks to `.llm-notes/MAIN.md`. Keep this file tool-neutral.
+- Source of truth: `.llm-notes/agents/*.md` (subagents) and `.mcp.json` (MCP servers).
+- `.codex/agents/*.toml` and the marked block in `.codex/config.toml` are generated. Never edit them by hand; after changing a source, run `node .llm-notes/sync.mjs` (`--check` fails if they are stale).
+- MCP `env` in `.mcp.json` must be written as `"NAME": "${NAME}"` (inherited from the shell). Never write secret values into these files.

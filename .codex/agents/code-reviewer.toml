@@ -1,3 +1,5 @@
+# 生成物: 手で編集しない。正本を直して `node .llm-notes/sync.mjs` を実行する
+
 name = "code-reviewer"
 description = "直近の差分をレビューし、深刻度別に問題を報告する"
 sandbox_mode = "read-only"
@@ -8,4 +10,3 @@ and missing tests. Return a prioritized list with severity and file/line
 references. Be specific. Do not modify files. If no issues are found, say so
 explicitly.
 """
-

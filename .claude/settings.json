@@ -4,10 +4,29 @@
       "Read(.env)",
       "Read(**/.env)",
       "Read(.env.keys)",
+      "Read(**/.env.keys)",
       "Read(**/credentials.json)",
       "Bash(dotenvx run:*)",
+      "Bash(dotenvx get:*)",
+      "Bash(dotenvx decrypt:*)",
+      "Bash(npx dotenvx run:*)",
+      "Bash(npx dotenvx get:*)",
+      "Bash(npx dotenvx decrypt:*)",
       "Bash(printenv:*)",
       "Bash(env:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Read|Grep|Glob|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.mjs\""
+          }
+        ]
+      }
     ]
   }
 }
