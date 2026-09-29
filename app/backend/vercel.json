@@ -5,11 +5,11 @@
   "outputDirectory": "public",
   "functions": {
     "api/index.js": {
-      "includeFiles": "dist/**",
+      "includeFiles": "{dist/**,node_modules/openai/**/*.js}",
       "maxDuration": 10
     },
     "api/ai.js": {
-      "includeFiles": "dist/**",
+      "includeFiles": "{dist/**,node_modules/openai/**/*.js}",
       "maxDuration": 60
     }
   },

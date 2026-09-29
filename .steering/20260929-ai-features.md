@@ -228,3 +228,13 @@ model WeeklyReport {
 - デプロイ前の確認: Vercel のプランの Cron の件数・頻度の上限（7 件・週 1 回ずつ）、`api/ai.js` のコールドスタートの時間（通知の回は起動 10 秒で上限ちょうど）
 - OpenAI の既定モデル名 `gpt-5.4-mini` は命名規則からの推定。切り替える場合は `LLM_MODEL` で正確な名前を指定する
 
+
+### デプロイ後の不具合（2026-09-29）
+- 症状: Vercel で `ERR_MODULE_NOT_FOUND: .../openai/lib/responses/ResponseInputItems.js`。ai-model.ts が 3 プロバイダを静的に import しているため、Gemini 利用時でも API 全体が起動しない
+- 原因: Vercel の @vercel/node が使う @vercel/nft 1.10.0 が openai の exports のパターンを解決できず、ファイルを関数に含めていなかった（最新の 1.11.0 では解決できる）。手元の node_modules で起動する互換チェックでは検出できなかった
+- 対応
+  - `vercel.json` の `includeFiles` に `node_modules/openai/**/*.js`（CJS の .js、約 2.8MB）を追加
+  - ビルド時のチェックを `scripts/check-vercel-bundle.mjs` に置き換え。Vercel と同じ版の nft（devDependency で 1.10.0 に固定）で集めたファイルと includeFiles だけで、require(esm) を無効にして起動する。修正前の設定では同じエラーを再現し（終了コード 1）、修正後は 2 つの関数 × 3 プロバイダ（google / openai / anthropic のダミーキーで、LLM クライアントが作られたことまで確認）で起動できることを確認
+  - nft への渡し方は @vercel/node に合わせる（base / processCwd / mixedModules）。失敗時も一時ディレクトリは必ず削除する
+- レビュー（code-reviewer / security-reviewer、各 2 回）: Critical・High・Medium なし
+  - 残した Low: 最初の失敗で止まる（速く失敗させるため）、確認できるのは起動までに読み込まれるモジュールだけ、@vercel/nft の版は Vercel のビルドログの @vercel/node に合わせて手で更新が必要、ビルド中に @vercel/nft などの依存が本物の環境変数を持つ親プロセスで動く（版の固定と lockfile で運用。ビルドに不要な秘密は Vercel で Runtime 専用にするのが望ましい）

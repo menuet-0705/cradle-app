@@ -7,7 +7,7 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "build": "prisma generate && nest build && node scripts/check-esm-compat.mjs",
+    "build": "prisma generate && nest build && node scripts/check-vercel-bundle.mjs",
     "build:web": "bash scripts/build-web.sh",
     "deploy": "nest deploy",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
@@ -58,6 +58,7 @@
     "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.0.0",
+    "@vercel/nft": "1.10.0",
     "@vitest/coverage-v8": "^4.1.2",
     "dotenv": "^18.0.4",
     "oxlint": "^1.58.0",
