@@ -26,6 +26,7 @@ import { ageInMonths } from './prompt.js';
  * コメントは 1 日 1 件なので、失敗したときの作り直しの分だけ余裕を持たせる。
  * 利用者ごと・全体の上限は ai_usages で数える（食事の提案とは別の枠。ai-usage.ts）
  */
+// （日本以外の地域では、現地で日付が変わっても JST の日付が変わるまで回数は戻らない。仕様上の割り切り）
 export const CHART_COMMENT_DAILY_ATTEMPTS = 3;
 // 失敗した直後は自動で作り直さない（タブの行き来などで失敗を繰り返さない）
 const FAILURE_COOLDOWN_MS = 5 * 60 * 1000;
@@ -178,10 +179,13 @@ export class ChartCommentsService {
         select: commentSelect,
         orderBy: { createdAt: 'desc' },
       }),
+      userAttemptsLeft(this.prisma, 'CHART_COMMENT', userId, now),
     ]);
     // 今日の記録があり、今日のコメントがまだない
     const due = enabled && today.hasRecord && today.live === 0;
-    const limitReached = due && today.attempts >= CHART_COMMENT_DAILY_ATTEMPTS;
+    // こども × グラフの試行か、利用者の 1 日の上限に達した（開くたびに作成を依頼させない）
+    const limitReached =
+      due && (today.attempts >= CHART_COMMENT_DAILY_ATTEMPTS || userLeft <= 0);
     // 失敗した直後で、少し待てば作れる
     const retryLater = due && !limitReached && coolingDown(today, now);
     return {

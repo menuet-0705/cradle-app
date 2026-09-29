@@ -183,7 +183,8 @@ enum AiUsageKind {
 
 model AiUsage {
   id        String      @id @default(uuid()) @db.Uuid
-  kind      AiUsageKind @default(MEAL_SUGGESTION)
+  /// 数える枠（既定値は持たせない。新しい機能で書き忘れて別の枠に数えないように）
+  kind      AiUsageKind
   userId    String?     @map("user_id") @db.Uuid
   createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
   user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)

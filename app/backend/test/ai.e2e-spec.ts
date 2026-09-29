@@ -661,6 +661,11 @@ describe('AI features (e2e)', () => {
       expect(prompts).toHaveLength(6);
       const child = await addChild(mama.token, 'こども6');
       await addWeight(mama.token, child.id, justNow(), 7000);
+      // 上限に達したことを状態で返す（開くたびに作成を依頼させない）
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: false,
+        limitReached: true,
+      });
       await create(mama.token, child.id, 'weight')
         .expect(429)
         .expect((res) =>
@@ -678,6 +683,27 @@ describe('AI features (e2e)', () => {
         .set(auth(mama.token))
         .expect(200);
       expect(meal.body).toMatchObject({ remainingToday: 3 });
+    });
+
+    it('does not let a different time zone reset the daily attempts', async () => {
+      const mama = await signup('ママ');
+      const child = await addChild(mama.token, 'しろう');
+      await addWeight(mama.token, child.id, justNow(), 7000);
+      // 失敗を 3 回（それぞれ待ち時間を過ぎたことにする）
+      for (let i = 0; i < 3; i++) {
+        failNext = true;
+        await create(mama.token, child.id, 'weight').expect(502);
+        await expireFailures(child.id);
+      }
+      // 別の地域のタイムゾーンを送って「今日」をずらしても、試行は JST の日で数える
+      for (const otherTz of ['Pacific/Kiritimati', 'Etc/GMT+12', 'UTC']) {
+        await api()
+          .post(chartUrl(child.id, 'weight'))
+          .set(auth(mama.token))
+          .send({ tz: otherTz })
+          .expect((res) => expect([201, 429]).toContain(res.status));
+      }
+      expect(prompts).toHaveLength(3);
     });
 
     it("validates input and hides other families' children", async () => {

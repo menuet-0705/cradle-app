@@ -211,7 +211,10 @@ class _ChartCommentCardState extends ConsumerState<ChartCommentCard> {
                   ),
               ],
             ),
-            if (_error case final error?) ...[
+            // 失敗の直後・上限のときはサーバーの状態に応じた案内を出すので、同じ内容を重ねて出さない
+            if (_error case final error?
+                when !(state.value?.retryLater ?? false) &&
+                    !(state.value?.limitReached ?? false)) ...[
               const SizedBox(height: 8),
               Text(error, style: TextStyle(color: scheme.error)),
             ],
