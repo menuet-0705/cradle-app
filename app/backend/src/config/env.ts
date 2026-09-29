@@ -5,7 +5,8 @@ export type LlmProvider = (typeof LLM_PROVIDERS)[number];
 
 // LLM_MODEL を省略したときのモデル
 const DEFAULT_LLM_MODELS: Record<LlmProvider, string> = {
-  google: 'gemini-3.7-flash',
+  //google: 'gemini-3.7-flash',
+  google: 'gemini-3.5-flash-lite',
   openai: 'gpt-5.4-mini',
   anthropic: 'claude-sonnet-5',
 };
