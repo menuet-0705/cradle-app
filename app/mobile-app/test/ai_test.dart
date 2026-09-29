@@ -183,16 +183,30 @@ void main() {
     expect(find.text('今日はあと 3 回提案できます'), findsOneWidget);
     // 最新のレポートは開いた状態で表示する
     expect(find.text('よく飲んだ 1 週間'), findsOneWidget);
-    expect(find.text('・ミルクをしっかり飲めた'), findsOneWidget);
-    expect(find.text('睡眠 1 日平均 12時間5分'), findsOneWidget);
-    expect(find.text('体重 +150 g'), findsOneWidget);
+    expect(find.text('よかった点'), findsOneWidget);
+    expect(find.text('ミルクをしっかり飲めた'), findsOneWidget);
+    expect(find.text('傾向'), findsOneWidget);
+    expect(find.text('睡眠が安定'), findsOneWidget);
+    // 気になる点がない週は囲みごと出さない
+    expect(find.text('気になる点'), findsNothing);
+    // 集計は数値とラベルのタイル
+    expect(find.text('600 ml'), findsOneWidget);
+    expect(find.text('12時間5分'), findsOneWidget);
+    expect(find.text('1日平均の睡眠'), findsOneWidget);
+    expect(find.text('+150 g'), findsOneWidget);
+    expect(find.text('体重の増減'), findsOneWidget);
 
     await tester.tap(find.text('提案してもらう'));
     await tester.pumpAndSettle();
     expect(repo.created, 1);
     expect(find.text('まぐろのおかゆ'), findsOneWidget);
-    expect(find.text('鉄分: 肉が少ない'), findsNothing);
-    expect(find.text('・鉄分: 肉が少ない'), findsOneWidget);
+    // 好み・不足しがちな栄養・提案の栄養はタグ、理由は本文として分けて出す
+    expect(find.text('かぼちゃが好き'), findsOneWidget);
+    expect(find.text('不足気味かもしれない栄養'), findsOneWidget);
+    expect(find.text('鉄分'), findsNWidgets(2));
+    expect(find.text('肉が少ない'), findsOneWidget);
+    expect(find.text('鉄分を補える'), findsOneWidget);
+    expect(find.text('小さく'), findsOneWidget);
     expect(find.text('今日はあと 2 回提案できます'), findsOneWidget);
 
     await tester.scrollUntilVisible(find.byType(SwitchListTile), 200);
