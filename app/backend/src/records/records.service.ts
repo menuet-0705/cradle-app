@@ -234,6 +234,11 @@ export class RecordsService {
 
   async milkDaily(userId: string, childId: string, q: MilkDailyDto) {
     await this.children.assertAccess(userId, childId);
+    return this.milkDailyOf(childId, q);
+  }
+
+  /** 1 日ごとのミルクの合計（権限の確認は呼び出し側で済ませる。グラフの AI コメントも使う） */
+  async milkDailyOf(childId: string, q: MilkDailyDto) {
     // 値は全てバインド変数で渡す（$queryRaw のタグ付きテンプレート）
     const rows = await this.prisma.$queryRaw<
       { date: string; totalMl: bigint; count: bigint }[]

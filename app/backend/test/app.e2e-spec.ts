@@ -27,7 +27,10 @@ describe('cradle API (e2e)', () => {
       imports: [AppModule],
     }).compile();
     app = configureApp(moduleRef.createNestApplication());
-    await app.init();
+    // 一度だけ 127.0.0.1 で待ち受ける。supertest に任せると、リクエストごとに全アドレス（::）の
+    // 空きポートで待ち受け、macOS では他のアプリが 127.0.0.1 で使っているポートと重なって
+    // そのアプリにリクエストが届くことがある（たまに 401・404 になる不安定なテストの原因）
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
     // 設定ミスで開発・本番のデータを消さないよう、テスト用 DB であることを確認してから消す
     const [{ db }] = await prisma.$queryRaw<{ db: string }[]>`

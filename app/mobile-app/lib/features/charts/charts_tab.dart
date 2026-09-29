@@ -6,47 +6,101 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
+import '../ai/ai_models.dart';
+import '../ai/ai_providers.dart';
+import 'chart_comment_card.dart';
 import '../records/records_providers.dart';
 
-class ChartsTab extends ConsumerWidget {
+const _icons = {
+  ChartKind.weight: Icons.monitor_weight_outlined,
+  ChartKind.milk: Icons.local_drink_outlined,
+};
+
+/// グラフ画面。体重・ミルクをタブで切り替え、グラフの下に AI のコメントを出す
+class ChartsTab extends StatelessWidget {
   const ChartsTab({super.key, required this.childId});
 
   final String childId;
 
   @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: ChartKind.values.length,
+      child: Column(
+        children: [
+          TabBar(
+            tabs: [
+              for (final chart in ChartKind.values)
+                Tab(icon: Icon(_icons[chart]), text: chart.label),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                for (final chart in ChartKind.values)
+                  _ChartPage(childId: childId, chart: chart),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 1 つのタブ: グラフのカードと、AI のコメントのカード
+class _ChartPage extends ConsumerWidget {
+  const _ChartPage({required this.childId, required this.chart});
+
+  final String childId;
+  final ChartKind chart;
+
+  @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final commentKey = (childId: childId, chart: chart);
     return RefreshIndicator(
       onRefresh: () => Future.wait([
-        ref.refresh(weightSeriesProvider(childId).future),
-        ref.refresh(milkDailyProvider(childId).future),
+        switch (chart) {
+          ChartKind.weight => ref.refresh(weightSeriesProvider(childId).future),
+          ChartKind.milk => ref.refresh(milkDailyProvider(childId).future),
+        },
+        ref.refresh(chartCommentProvider(commentKey).future),
       ]),
       child: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          _Section(
-            title: '体重の推移',
-            child: ref
-                .watch(weightSeriesProvider(childId))
-                .when(
-                  loading: _loading,
-                  error: (e, _) => Text(errorMessage(e)),
-                  data: (points) => points.isEmpty
-                      ? const _Empty('体重を記録するとグラフが表示されます')
-                      : _WeightChart(points: points),
-                ),
-          ),
-          const SizedBox(height: 24),
-          _Section(
-            title: 'ミルクの量（直近$milkChartDays日）',
-            child: ref
-                .watch(milkDailyProvider(childId))
-                .when(
-                  loading: _loading,
-                  error: (e, _) => Text(errorMessage(e)),
-                  data: (days) => days.isEmpty
-                      ? const _Empty('ミルクを記録するとグラフが表示されます')
-                      : _MilkChart(days: days),
-                ),
+          switch (chart) {
+            ChartKind.weight => _Section(
+              title: '体重の推移',
+              child: ref
+                  .watch(weightSeriesProvider(childId))
+                  .when(
+                    loading: _loading,
+                    error: (e, _) => Text(errorMessage(e)),
+                    data: (points) => points.isEmpty
+                        ? const _Empty('体重を記録するとグラフが表示されます')
+                        : _WeightChart(points: points),
+                  ),
+            ),
+            ChartKind.milk => _Section(
+              title: 'ミルクの量（直近$milkChartDays日）',
+              child: ref
+                  .watch(milkDailyProvider(childId))
+                  .when(
+                    loading: _loading,
+                    error: (e, _) => Text(errorMessage(e)),
+                    data: (days) => days.isEmpty
+                        ? const _Empty('ミルクを記録するとグラフが表示されます')
+                        : _MilkChart(days: days),
+                  ),
+            ),
+          },
+          const SizedBox(height: 16),
+          // こども・グラフが変わったら作り直す（自動作成の「1 回だけ」も数え直す）
+          ChartCommentCard(
+            key: ValueKey(commentKey),
+            childId: childId,
+            chart: chart,
           ),
         ],
       ),
@@ -220,13 +274,29 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 16),
-        child,
-      ],
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      margin: EdgeInsets.zero,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
+            child,
+          ],
+        ),
+      ),
     );
   }
 }

@@ -24,6 +24,7 @@ model User {
   mealSuggestions   MealSuggestion[]
   usedInvites       FamilyInvite[]   @relation("InviteUsedBy")
   aiUsages          AiUsage[]
+  chartComments     ChartComment[]
 
   @@map("users")
 }
@@ -74,6 +75,7 @@ model Child {
   records         Record[]
   mealSuggestions MealSuggestion[]
   weeklyReports   WeeklyReport[]
+  chartComments   ChartComment[]
 
   @@index([familyId])
   @@map("children")
@@ -173,14 +175,21 @@ model MealSuggestion {
 
 /// AI（LLM）の利用記録。ユーザー単位・全体の 1 日の上限を数える。
 /// こどもを削除しても消さない（削除と作り直しで上限を戻させない）。ユーザーの削除でも行は残す
-model AiUsage {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String?  @map("user_id") @db.Uuid
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+/// AI の利用回数を数える機能の種類（機能ごとに別の枠で上限を数える）
+enum AiUsageKind {
+  MEAL_SUGGESTION
+  CHART_COMMENT
+}
 
-  @@index([userId, createdAt])
-  @@index([createdAt])
+model AiUsage {
+  id        String      @id @default(uuid()) @db.Uuid
+  kind      AiUsageKind @default(MEAL_SUGGESTION)
+  userId    String?     @map("user_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([kind, userId, createdAt])
+  @@index([kind, createdAt])
   @@map("ai_usages")
 }
 
@@ -203,4 +212,29 @@ model WeeklyReport {
   @@unique([childId, periodEnd])
   @@index([periodEnd, notifiedAt])
   @@map("weekly_reports")
+}
+
+/// グラフの種類（AI のコメントを付けるもの）
+enum ChartKind {
+  WEIGHT
+  MILK
+}
+
+/// グラフごとの AI のコメント。こども × グラフで 1 日 1 件（今日の記録があるときに作る）。家族で共有する
+model ChartComment {
+  id          String    @id @default(uuid()) @db.Uuid
+  childId     String    @map("child_id") @db.Uuid
+  chart       ChartKind
+  /// まとめ・ポイント・アドバイス（chart-comment.ts の ChartCommentContent）。生成中・失敗は null
+  content     Json?
+  model       String
+  /// 生成に失敗した日時。失敗も試行として回数に数える
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz(3)
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  child       Child     @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([childId, chart, createdAt])
+  @@map("chart_comments")
 }

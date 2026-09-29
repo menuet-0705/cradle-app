@@ -49,6 +49,10 @@ class _Repo implements AiRepository {
 
   @override
   Future<bool> setWeeklyReportEmail(bool enabled) async => enabled;
+
+  // グラフのコメントはこのテストでは使わない
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 final _fullSuggestion = MealSuggestion(

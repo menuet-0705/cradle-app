@@ -1,4 +1,6 @@
 import 'package:cradle/app.dart';
+import 'package:cradle/features/ai/ai_models.dart';
+import 'package:cradle/features/ai/ai_providers.dart';
 import 'package:cradle/core/providers.dart';
 import 'package:cradle/features/auth/session.dart';
 import 'package:cradle/features/children/child.dart';
@@ -60,6 +62,15 @@ Widget _app(
     childrenProvider.overrideWith((ref) async => children),
     weightSeriesProvider.overrideWith((ref, childId) async => const []),
     milkDailyProvider.overrideWith((ref, childId) async => const []),
+    chartCommentProvider.overrideWith(
+      (ref, arg) async => const ChartCommentState(
+        comment: null,
+        needsUpdate: false,
+        generating: false,
+        limitReached: false,
+        enabled: true,
+      ),
+    ),
     dayRecordsProvider.overrideWith(
       (ref, arg) async => [
         GrowthRecord(

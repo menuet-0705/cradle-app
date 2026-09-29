@@ -7,5 +7,7 @@ import { RecordsService } from './records.service.js';
   imports: [ChildrenModule],
   controllers: [RecordsController],
   providers: [RecordsService],
+  // グラフの AI コメントがミルクの日別集計を使う
+  exports: [RecordsService],
 })
 export class RecordsModule {}

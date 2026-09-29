@@ -32,6 +32,16 @@ const OUTPUTS: Record<string, unknown> = {
       caution: '小さく刻む',
     })),
   },
+  chart_comment_weight: {
+    headline: '順調に増えています',
+    points: ['1 週間で 150 g 増えています'],
+    advice: 'この調子で記録を続けましょう',
+  },
+  chart_comment_milk: {
+    headline: 'ミルクの量は安定しています',
+    points: ['1 日 600 ml 前後です'],
+    advice: '無理なく続けましょう',
+  },
   weekly_report: {
     headline: 'よく食べた 1 週間',
     goodPoints: ['毎日食事ができました'],
@@ -116,7 +126,10 @@ describe('AI features (e2e)', () => {
       .useValue(model)
       .compile();
     app = configureApp(moduleRef.createNestApplication());
-    await app.init();
+    // 一度だけ 127.0.0.1 で待ち受ける。supertest に任せると、リクエストごとに全アドレス（::）の
+    // 空きポートで待ち受け、macOS では他のアプリが 127.0.0.1 で使っているポートと重なって
+    // そのアプリにリクエストが届くことがある（たまに 401・404 になる不安定なテストの原因）
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
     const [{ db }] = await prisma.$queryRaw<{ db: string }[]>`
       SELECT current_database() AS db`;
@@ -459,6 +472,235 @@ describe('AI features (e2e)', () => {
       expect(latest.body).toMatchObject({ remainingToday: 0 });
       const res = await suggest(mama.token, child.id).expect(429);
       expect(res.body).toMatchObject({ code: 'DAILY_LIMIT' });
+    });
+  });
+
+  describe('chart comments', () => {
+    const tz = 'Asia/Tokyo';
+    const chartUrl = (childId: string, chart: string) =>
+      `/api/v1/children/${childId}/ai/chart-comments/${chart}`;
+    type ChartState = {
+      comment: { content: { headline: string } } | null;
+      needsUpdate: boolean;
+      generating: boolean;
+      retryLater: boolean;
+      limitReached: boolean;
+      enabled: boolean;
+    };
+    const state = async (token: string, childId: string, chart: string) =>
+      (
+        await api()
+          .get(chartUrl(childId, chart))
+          .query({ tz })
+          .set(auth(token))
+          .expect(200)
+      ).body as ChartState;
+    const create = (token: string, childId: string, chart: string) =>
+      api().post(chartUrl(childId, chart)).set(auth(token)).send({ tz });
+    const addWeight = (token: string, childId: string, at: Date, g: number) =>
+      api()
+        .post(`/api/v1/children/${childId}/records`)
+        .set(auth(token))
+        .send({ type: 'WEIGHT', startedAt: at.toISOString(), weightG: g, tz })
+        .expect(201);
+    // 日本時間で今日の、いまより少し前（0 時直後に実行しても今日になるよう、1 秒前）
+    const justNow = () => new Date(Date.now() - 1000);
+    // 失敗した直後の待ち時間（5 分）を過ぎたことにする
+    const expireFailures = (childId: string) =>
+      prisma.chartComment.updateMany({
+        where: { childId, failedAt: { not: null } },
+        data: { failedAt: new Date(Date.now() - 10 * 60 * 1000) },
+      });
+
+    it('comments once a day when there is a record today', async () => {
+      const mama = await signup('ママ');
+      const child = await addChild(mama.token, 'たろう');
+
+      // 記録がない・今日の記録がないときは作らない
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        comment: null,
+        needsUpdate: false,
+        generating: false,
+        limitReached: false,
+        enabled: true,
+      });
+      await addWeight(
+        mama.token,
+        child.id,
+        new Date(Date.now() - DAY_MS),
+        6000,
+      );
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: false,
+      });
+      await create(mama.token, child.id, 'weight')
+        .expect(201)
+        .expect((res) => expect(res.body).toMatchObject({ comment: null }));
+      expect(prompts).toHaveLength(0);
+
+      // 今日の記録があり、今日のコメントがまだなければ作る
+      await addWeight(mama.token, child.id, justNow(), 6150);
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: true,
+      });
+      const created = await create(mama.token, child.id, 'weight').expect(201);
+      expect(created.body).toMatchObject({
+        comment: { content: { headline: '順調に増えています' } },
+        needsUpdate: false,
+        generating: false,
+      });
+      expect(prompts).toHaveLength(1);
+      // 数値だけを渡し、名前は渡さない
+      expect(prompts[0]).toContain('6150');
+      expect(prompts[0]).not.toContain('たろう');
+
+      // 1 日 1 回: 同じ日に記録が変わっても作り直さない
+      await addWeight(mama.token, child.id, justNow(), 6160);
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: false,
+        comment: { content: { headline: '順調に増えています' } },
+      });
+      await create(mama.token, child.id, 'weight').expect(201);
+      expect(prompts).toHaveLength(1);
+
+      // ミルクのグラフは別に数える。今日のミルクの記録がなければ作らない
+      expect(await state(mama.token, child.id, 'milk')).toMatchObject({
+        comment: null,
+        needsUpdate: false,
+      });
+      await api()
+        .post(`/api/v1/children/${child.id}/records`)
+        .set(auth(mama.token))
+        .send({
+          type: 'MILK',
+          startedAt: justNow().toISOString(),
+          amountMl: 120,
+        })
+        .expect(201);
+      expect(await state(mama.token, child.id, 'milk')).toMatchObject({
+        needsUpdate: true,
+      });
+      const milk = await create(mama.token, child.id, 'milk').expect(201);
+      expect(milk.body).toMatchObject({
+        comment: { content: { headline: 'ミルクの量は安定しています' } },
+      });
+      expect(prompts[1]).toContain('120');
+
+      // 食事の提案の回数とは別の枠（グラフを開いても減らない）
+      const meal = await api()
+        .get(`/api/v1/children/${child.id}/ai/meal-suggestions/latest`)
+        .set(auth(mama.token))
+        .expect(200);
+      expect(meal.body).toMatchObject({ remainingToday: 3 });
+    });
+
+    it('creates once when family members open it at the same time', async () => {
+      const mama = await signup('ママ');
+      const child = await addChild(mama.token, 'はなこ');
+      await addWeight(mama.token, child.id, justNow(), 7000);
+      await Promise.all([
+        create(mama.token, child.id, 'weight').expect(201),
+        create(mama.token, child.id, 'weight').expect(201),
+        create(mama.token, child.id, 'weight').expect(201),
+      ]);
+      expect(prompts).toHaveLength(1);
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: false,
+        comment: { content: { headline: '順調に増えています' } },
+      });
+    });
+
+    it('waits after a failure and stops at the daily attempt limit', async () => {
+      const mama = await signup('ママ');
+      const child = await addChild(mama.token, 'さぶろう');
+      await addWeight(mama.token, child.id, justNow(), 7000);
+
+      for (let i = 0; i < 3; i++) {
+        failNext = true;
+        await create(mama.token, child.id, 'weight').expect(502);
+        // 失敗した直後は自動で作り直さない（タブの行き来で失敗を繰り返さない）
+        expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+          comment: null,
+          needsUpdate: false,
+          retryLater: i < 2,
+          limitReached: i === 2,
+        });
+        // 待ち時間中は作らずに今の状態を返す
+        await create(mama.token, child.id, 'weight')
+          .expect(201)
+          .expect((res) => expect(res.body).toMatchObject({ comment: null }));
+        await expireFailures(child.id);
+      }
+      expect(prompts).toHaveLength(3);
+      // 失敗も含めて 1 日 3 回まで。上限に達したことを返す
+      expect(await state(mama.token, child.id, 'weight')).toMatchObject({
+        needsUpdate: false,
+        limitReached: true,
+      });
+      await create(mama.token, child.id, 'weight')
+        .expect(429)
+        .expect((res) =>
+          expect(res.body).toMatchObject({ code: 'DAILY_LIMIT' }),
+        );
+      expect(prompts).toHaveLength(3);
+    });
+
+    it('limits each user per day, even if children are deleted', async () => {
+      // 作成から 1 日以内のアカウントは 1 日 6 回（食事の提案とは別の枠）
+      const mama = await signup('ママ');
+      for (let i = 0; i < 6; i++) {
+        const child = await addChild(mama.token, `こども${i}`);
+        await addWeight(mama.token, child.id, justNow(), 7000);
+        await create(mama.token, child.id, 'weight').expect(201);
+        // こどもを削除しても、利用者の回数は戻らない
+        await api()
+          .delete(`/api/v1/children/${child.id}`)
+          .set(auth(mama.token))
+          .expect(204);
+      }
+      expect(prompts).toHaveLength(6);
+      const child = await addChild(mama.token, 'こども6');
+      await addWeight(mama.token, child.id, justNow(), 7000);
+      await create(mama.token, child.id, 'weight')
+        .expect(429)
+        .expect((res) =>
+          expect(res.body).toMatchObject({ code: 'DAILY_LIMIT' }),
+        );
+      expect(prompts).toHaveLength(6);
+      // 上限で断った分は試行に数えず、コメントの行も残さない
+      expect(
+        await prisma.chartComment.count({ where: { childId: child.id } }),
+      ).toBe(0);
+      // 食事の提案の回数は減っていない
+      await addMeal(mama.token, child.id, justNow(), 'パン');
+      const meal = await api()
+        .get(`/api/v1/children/${child.id}/ai/meal-suggestions/latest`)
+        .set(auth(mama.token))
+        .expect(200);
+      expect(meal.body).toMatchObject({ remainingToday: 3 });
+    });
+
+    it("validates input and hides other families' children", async () => {
+      const mama = await signup('ママ');
+      const other = await signup('よそ');
+      const child = await addChild(mama.token, 'じろう');
+      await api()
+        .get(chartUrl(child.id, 'weight'))
+        .query({ tz })
+        .set(auth(other.token))
+        .expect(404);
+      await create(other.token, child.id, 'weight').expect(404);
+      await api()
+        .get(chartUrl(child.id, 'sleep'))
+        .query({ tz })
+        .set(auth(mama.token))
+        .expect(400);
+      await api()
+        .get(chartUrl(child.id, 'weight'))
+        .query({ tz: '+09:00' })
+        .set(auth(mama.token))
+        .expect(400);
+      await api().get(chartUrl(child.id, 'weight')).query({ tz }).expect(401);
     });
   });
 

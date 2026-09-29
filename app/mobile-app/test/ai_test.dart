@@ -66,6 +66,10 @@ class _FakeAiRepository implements AiRepository {
 
   @override
   Future<bool> setWeeklyReportEmail(bool enabled) async => email = enabled;
+
+  // グラフのコメントはこのテストでは使わない
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {

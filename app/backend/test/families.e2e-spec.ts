@@ -73,7 +73,10 @@ describe('family invites (e2e)', () => {
       .useValue(mailer)
       .compile();
     app = configureApp(moduleRef.createNestApplication());
-    await app.init();
+    // 一度だけ 127.0.0.1 で待ち受ける。supertest に任せると、リクエストごとに全アドレス（::）の
+    // 空きポートで待ち受け、macOS では他のアプリが 127.0.0.1 で使っているポートと重なって
+    // そのアプリにリクエストが届くことがある（たまに 401・404 になる不安定なテストの原因）
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
     const [{ db }] = await prisma.$queryRaw<{ db: string }[]>`
       SELECT current_database() AS db`;
@@ -83,6 +86,8 @@ describe('family invites (e2e)', () => {
   beforeEach(() => {
     app.get(RateLimitStore).clear();
     sent.length = 0;
+    // 前のテストが途中で失敗しても、送信の失敗の指定を持ち越さない
+    failNextSend = null;
   });
 
   afterAll(async () => {
@@ -259,14 +264,22 @@ describe('family invites (e2e)', () => {
     const mama = await signup('ママ');
     const [family] = await families(mama.token);
     failNextSend = 'failed';
-    await invite(mama.token, family.id, 'x@example.com').expect(503);
+    await invite(
+      mama.token,
+      family.id,
+      `x-${Date.now()}-${seq++}@example.com`,
+    ).expect(503);
     expect(
       await prisma.familyInvite.count({ where: { familyId: family.id } }),
     ).toBe(0);
 
     // 時間切れは「届いたかもしれない」ので招待を残す（届いたメールのリンクが使えるように）
     failNextSend = 'timeout';
-    await invite(mama.token, family.id, 'y@example.com').expect(503);
+    await invite(
+      mama.token,
+      family.id,
+      `y-${Date.now()}-${seq++}@example.com`,
+    ).expect(503);
     expect(
       await prisma.familyInvite.count({ where: { familyId: family.id } }),
     ).toBe(1);
@@ -294,10 +307,18 @@ describe('family invites (e2e)', () => {
   it("hides other families' invites and members", async () => {
     const mama = await signup('ママ');
     const [family] = await families(mama.token);
-    await invite(mama.token, family.id, 'x@example.com').expect(201);
+    await invite(
+      mama.token,
+      family.id,
+      `x-${Date.now()}-${seq++}@example.com`,
+    ).expect(201);
     const other = await signup('他人');
     const h = auth(other.token);
-    await invite(other.token, family.id, 'y@example.com').expect(404);
+    await invite(
+      other.token,
+      family.id,
+      `y-${Date.now()}-${seq++}@example.com`,
+    ).expect(404);
     await api().get(`/api/v1/families/${family.id}/invites`).set(h).expect(404);
     const [pending] = (
       await api()

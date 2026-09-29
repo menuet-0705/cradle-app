@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_client.dart';
 import '../../core/providers.dart';
+import '../../core/time_zone.dart';
 import 'ai_models.dart';
 
 class AiRepository {
@@ -24,6 +25,32 @@ class AiRepository {
       options: Options(receiveTimeout: const Duration(seconds: 70)),
     );
     return MealSuggestionState.fromJson(res.data!);
+  }
+
+  /// グラフのコメントの状態。「今日」は端末のタイムゾーンで区切る
+  Future<ChartCommentState> chartComment(
+    String childId,
+    ChartKind chart,
+  ) async {
+    final res = await _dio.get<Map<String, dynamic>>(
+      '/children/$childId/ai/chart-comments/${chart.path}',
+      queryParameters: {'tz': await deviceTimeZone()},
+    );
+    return ChartCommentState.fromJson(res.data!);
+  }
+
+  /// グラフのコメントを作る（今日の記録がない・同じデータのコメントがあるときは作らず今の状態を返す）
+  Future<ChartCommentState> createChartComment(
+    String childId,
+    ChartKind chart,
+  ) async {
+    final res = await _dio.post<Map<String, dynamic>>(
+      '/children/$childId/ai/chart-comments/${chart.path}',
+      data: {'tz': await deviceTimeZone()},
+      // AI の生成は数十秒かかることがある（サーバー側の上限は 60 秒）
+      options: Options(receiveTimeout: const Duration(seconds: 70)),
+    );
+    return ChartCommentState.fromJson(res.data!);
   }
 
   Future<List<WeeklyReport>> weeklyReports(String childId) async {
@@ -60,6 +87,13 @@ final mealSuggestionProvider = FutureProvider.autoDispose
     .family<MealSuggestionState, String>(
       (ref, childId) =>
           ref.watch(aiRepositoryProvider).latestMealSuggestion(childId),
+    );
+
+/// グラフのコメントの状態（記録を追加・修正・削除したら invalidateRecords で取り直す）
+final chartCommentProvider = FutureProvider.autoDispose
+    .family<ChartCommentState, ({String childId, ChartKind chart})>(
+      (ref, arg) =>
+          ref.watch(aiRepositoryProvider).chartComment(arg.childId, arg.chart),
     );
 
 final weeklyReportsProvider = FutureProvider.autoDispose

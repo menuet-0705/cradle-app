@@ -4,6 +4,7 @@
 import 'dart:io';
 
 import 'package:cradle/core/api_client.dart';
+import 'package:cradle/features/ai/ai_models.dart';
 import 'package:cradle/features/ai/ai_providers.dart';
 import 'package:cradle/features/auth/auth_repository.dart';
 import 'package:cradle/features/auth/session.dart';
@@ -129,6 +130,14 @@ void main() {
     expect(meal.suggestion, isNull);
     expect(meal.remainingToday, 3);
     expect(await ai.weeklyReports(child.id), isEmpty);
+    // グラフのコメント: 状態を読めること（AI の有無はローカルの設定しだいなので生成はしない）
+    for (final chart in ChartKind.values) {
+      final state = await ai.chartComment(child.id, chart);
+      expect(state.comment, isNull);
+      expect(state.limitReached, isFalse);
+      // 今日の体重・ミルクを記録済みで、今日のコメントはまだないので、AI が使えるなら作成を求められる
+      expect(state.needsUpdate, state.enabled);
+    }
     expect(await ai.weeklyReportEmail(), isTrue);
     expect(await ai.setWeeklyReportEmail(false), isFalse);
     expect(await ai.weeklyReportEmail(), isFalse);

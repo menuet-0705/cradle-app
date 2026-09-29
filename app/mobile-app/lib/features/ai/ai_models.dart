@@ -142,3 +142,82 @@ class WeeklyReport {
   /// 期間内の体重の増減（g）。記録が 1 件もなければ null
   final int? weightChangeG;
 }
+
+/// AI のコメントを付けるグラフの種類
+enum ChartKind {
+  weight('weight', '体重'),
+  milk('milk', 'ミルク');
+
+  const ChartKind(this.path, this.label);
+
+  /// API のパスでの名前
+  final String path;
+  final String label;
+}
+
+/// グラフについての AI のコメント（一言のまとめ・ポイント・アドバイス）
+class ChartComment {
+  const ChartComment({
+    required this.createdAt,
+    required this.headline,
+    required this.points,
+    required this.advice,
+  });
+
+  factory ChartComment.fromJson(Map<String, dynamic> json) {
+    final content = json['content'] as Map<String, dynamic>;
+    return ChartComment(
+      createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      headline: content['headline'] as String,
+      points: _strings(content['points']),
+      advice: content['advice'] as String,
+    );
+  }
+
+  final DateTime createdAt;
+  final String headline;
+  final List<String> points;
+  final String advice;
+}
+
+/// グラフのコメントの状態。needsUpdate ならアプリが作成を依頼する
+class ChartCommentState {
+  const ChartCommentState({
+    required this.comment,
+    required this.needsUpdate,
+    required this.generating,
+    this.retryLater = false,
+    required this.limitReached,
+    required this.enabled,
+  });
+
+  factory ChartCommentState.fromJson(Map<String, dynamic> json) {
+    final c = json['comment'] as Map<String, dynamic>?;
+    return ChartCommentState(
+      comment: c == null ? null : ChartComment.fromJson(c),
+      needsUpdate: json['needsUpdate'] as bool,
+      generating: json['generating'] as bool? ?? false,
+      retryLater: json['retryLater'] as bool? ?? false,
+      limitReached: json['limitReached'] as bool? ?? false,
+      enabled: json['enabled'] as bool? ?? true,
+    );
+  }
+
+  /// 最新のコメント（まだなければ null。今日の分とは限らない）
+  final ChartComment? comment;
+
+  /// 今日の記録があり、今日のコメントがまだない（1 日 1 回。失敗した直後・上限のときは false）
+  final bool needsUpdate;
+
+  /// 今のデータのコメントを、家族の誰かが作成中
+  final bool generating;
+
+  /// 今日のコメントを作ろうとして失敗した直後（少し時間をおけば作れる）
+  final bool retryLater;
+
+  /// 今日のコメントを作ろうとしたが、失敗が続いて今日の上限に達した
+  final bool limitReached;
+
+  /// サーバーで AI が設定されているか
+  final bool enabled;
+}

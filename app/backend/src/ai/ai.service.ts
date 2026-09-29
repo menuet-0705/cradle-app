@@ -1,6 +1,4 @@
 import {
-  HttpException,
-  HttpStatus,
   Inject,
   Injectable,
   Logger,
@@ -11,6 +9,14 @@ import { ChildrenService } from '../children/children.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AI_MODEL, isAiConfigured, type AiModel } from './ai-model.js';
+import {
+  aiBusy,
+  dailyLimitReached,
+  overGlobalLimit,
+  PENDING_STALE_MS,
+  startOfJstDay,
+  userAttemptsLeft,
+} from './ai-usage.js';
 import type {
   ListWeeklyReportsDto,
   UpdateNotificationSettingsDto,
@@ -27,26 +33,10 @@ import { ageInMonths, formatJst, redactNames } from './prompt.js';
 export const MEAL_SUGGESTION_DAILY_LIMIT = 3;
 // 失敗も含めた試行の上限（LLM の料金は失敗しても発生する。失敗させ続けて無制限に呼ばせない）
 const MEAL_SUGGESTION_DAILY_ATTEMPTS = 6;
-// 利用者 1 人の 1 日の試行の上限（こどもの削除・作り直しでは戻らないよう ai_usages で数える）
-const USER_DAILY_ATTEMPTS = 20;
-// 作成から 1 日以内のアカウントは低くする（使い捨てアカウントで全体の上限を使い切らせない）
-const NEW_ACCOUNT_DAILY_ATTEMPTS = 6;
-const NEW_ACCOUNT_MS = 24 * 60 * 60 * 1000;
-// 全利用者の 1 日の試行の上限。費用が青天井にならないための最後の安全装置（達したら警告ログ）
-const GLOBAL_DAILY_ATTEMPTS = 1_000;
-// 生成中の行がこの時間を過ぎても残っていたら、強制終了で残ったものとみなし成功回数から外す
-// （関数の制限時間 60 秒より十分長く）
-const PENDING_STALE_MS = 2 * 60 * 1000;
 const MEAL_LOOKBACK_DAYS = 30;
 const MAX_MEALS = 200;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
-/** JST の 0:00 */
-const startOfJstDay = (now: Date) =>
-  new Date(
-    Math.floor((+now + JST_OFFSET_MS) / DAY_MS) * DAY_MS - JST_OFFSET_MS,
-  );
 
 const suggestionSelect = {
   id: true,
@@ -54,11 +44,8 @@ const suggestionSelect = {
   createdAt: true,
 } as const satisfies Prisma.MealSuggestionSelect;
 
-const dailyLimitReached = () =>
-  new HttpException(
-    { message: 'Daily meal suggestion limit reached', code: 'DAILY_LIMIT' },
-    HttpStatus.TOO_MANY_REQUESTS,
-  );
+const mealLimitReached = () =>
+  dailyLimitReached('Daily meal suggestion limit reached');
 
 @Injectable()
 export class AiService {
@@ -100,7 +87,7 @@ export class AiService {
     const now = new Date();
     // 上限に達していれば、記録を読む前に断る
     if ((await this.usageToday(childId, userId, now)).remaining === 0) {
-      throw dailyLimitReached();
+      throw mealLimitReached();
     }
     const [child, meals] = await Promise.all([
       this.prisma.child.findUniqueOrThrow({
@@ -137,24 +124,21 @@ export class AiService {
         data: { childId, createdById: userId, model: this.model.name },
         select: { id: true },
       }),
-      this.prisma.aiUsage.create({ data: { userId }, select: { id: true } }),
-    ]);
-    const [usage, globalAttempts] = await Promise.all([
-      this.usageToday(childId, userId, now),
-      this.prisma.aiUsage.count({
-        where: { createdAt: { gte: startOfJstDay(now) } },
+      this.prisma.aiUsage.create({
+        data: { kind: 'MEAL_SUGGESTION', userId },
+        select: { id: true },
       }),
     ]);
-    const overGlobal = globalAttempts > GLOBAL_DAILY_ATTEMPTS;
+    const [usage, overGlobal] = await Promise.all([
+      this.usageToday(childId, userId, now),
+      overGlobalLimit(this.prisma, 'MEAL_SUGGESTION', now),
+    ]);
     if (usage.exceeded || overGlobal) {
       // LLM は呼んでいないので試行には数えない
       await this.discard(reserved.id, usageRow.id);
-      if (usage.exceeded) throw dailyLimitReached();
+      if (usage.exceeded) throw mealLimitReached();
       this.logger.warn('Global daily meal suggestion limit reached');
-      throw new ServiceUnavailableException({
-        message: 'AI is busy',
-        code: 'AI_BUSY',
-      });
+      throw aiBusy();
     }
 
     let content: MealSuggestionContent;
@@ -237,7 +221,7 @@ export class AiService {
    */
   private async usageToday(childId: string, userId: string, now: Date) {
     const today = { gte: startOfJstDay(now) };
-    const [used, attempts, userAttempts, user] = await Promise.all([
+    const [used, attempts, userLeft] = await Promise.all([
       this.prisma.mealSuggestion.count({
         where: {
           childId,
@@ -254,20 +238,12 @@ export class AiService {
       this.prisma.mealSuggestion.count({
         where: { childId, createdAt: today },
       }),
-      this.prisma.aiUsage.count({ where: { userId, createdAt: today } }),
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { createdAt: true },
-      }),
+      userAttemptsLeft(this.prisma, 'MEAL_SUGGESTION', userId, now),
     ]);
-    const userLimit =
-      +now - +user.createdAt < NEW_ACCOUNT_MS
-        ? NEW_ACCOUNT_DAILY_ATTEMPTS
-        : USER_DAILY_ATTEMPTS;
     const left = [
       MEAL_SUGGESTION_DAILY_LIMIT - used,
       MEAL_SUGGESTION_DAILY_ATTEMPTS - attempts,
-      userLimit - userAttempts,
+      userLeft,
     ];
     return {
       remaining: Math.max(0, Math.min(...left)),
