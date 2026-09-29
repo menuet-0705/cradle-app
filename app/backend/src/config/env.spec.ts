@@ -169,7 +169,7 @@ describe('loadConfig', () => {
     it('defaults to Gemini when GOOGLE_API_KEY is set', () => {
       expect(loadConfig({ ...base, GOOGLE_API_KEY: 'g-key' }).ai).toEqual({
         provider: 'google',
-        model: 'gemini-3.8-flash',
+        model: 'gemini-3.7-flash',
         apiKey: 'g-key',
       });
     });

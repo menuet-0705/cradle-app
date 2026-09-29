@@ -112,7 +112,7 @@ https://<domain>/api/v1/*  → NestJS（Vercel Function）
      - `NODE_ENV=production` を必ず設定する（Resend の SDK は production 以外では送信エラーの内容〈宛先を含むことがある〉をログに出すため）
      - `APP_URL=https://<domain>`（招待リンクの起点。https 必須）
    - AI（食事の提案・習慣レポート。選んだプロバイダの API キーがあるときだけ有効。未設定なら AI 機能は 503）
-     - 既定は Gemini: `GOOGLE_API_KEY`（Google AI Studio で発行）だけ設定すればよい（モデルは `gemini-3.8-flash`）
+     - 既定は Gemini: `GOOGLE_API_KEY`（Google AI Studio で発行）だけ設定すればよい（モデルは `gemini-3.7-flash`）
      - 切り替え: `LLM_PROVIDER=openai` + `OPENAI_API_KEY`、または `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`
      - モデルを変える場合は `LLM_MODEL`（例: `gemini-3.5-flash-lite`）。コードの変更は不要
      - `LLM_PROVIDER` / `LLM_MODEL` を設定したのに対応するキーがない場合は起動エラー

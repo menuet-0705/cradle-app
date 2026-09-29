@@ -31,7 +31,7 @@
 | 変数 | 例 | 説明 |
 |---|---|---|
 | `LLM_PROVIDER` | `google` / `openai` / `anthropic` | 既定 `google` |
-| `LLM_MODEL` | `gemini-3.8-flash` | 省略時はプロバイダごとの既定（google: `gemini-3.8-flash`） |
+| `LLM_MODEL` | `gemini-3.7-flash` | 省略時はプロバイダごとの既定（google: `gemini-3.7-flash`） |
 | `GOOGLE_API_KEY` | | Gemini（`@langchain/google-genai` の標準の変数名） |
 | `OPENAI_API_KEY` | | ChatGPT |
 | `ANTHROPIC_API_KEY` | | Claude |
@@ -245,3 +245,7 @@ model WeeklyReport {
 - 対応: `describeLlmError`（ai-model.ts）で、プロバイダの API エラー（Error かつ status 400〜599）だけ、クラス名・ステータス・理由（1 行、500 文字まで、API キーは設定値の完全一致と形のパターンで伏せ字）をログに出す。それ以外は LLM の出力が含まれうるので名前だけ。時間切れは「429 や 5xx が続いた可能性」を併記
 - 利用者の確認事項: 既定のモデル名 `gemini-3.8-flash` は Web 検索からの推定で、キーで使えるかは未確認。`GET /v1beta/models` で使えるモデル名を確認し、違えば `LLM_MODEL` で指定する
 - レビューで対応不要とした点: ログに組織 ID・プロジェクト番号・request_id が出ることがある（秘密ではない）。プロバイダのエラー本文にリクエスト内容が入る可能性は極めて小さい（3 社ともエラー本文はサーバーが返したものだけで組み立てる）
+
+### 既定モデルの変更（2026-09-29）
+- 本番で `gemini-3.8-flash` が `503 Service Unavailable`（Google 側の混雑。モデル名とキーは正常）になったため、利用者の依頼で既定を `gemini-3.7-flash` に変更（env.ts / env.spec.ts / README / .env.example）
+- `gemini-3.7-flash` がキーで使えるかは未確認（`GET /v1beta/models` で確認する）。混雑への備え（予備モデルへの fallback、503 / 429 の画面表示）は未対応の候補
