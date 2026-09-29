@@ -5,7 +5,11 @@ import request from 'supertest';
 import { configureApp } from '../src/app.factory.js';
 import { AppModule } from '../src/app.module.js';
 import { RateLimitStore } from '../src/common/rate-limit.js';
-import { MAILER, type MailMessage } from '../src/mail/mailer.js';
+import {
+  MAILER,
+  MailDeliveryUnknownError,
+  type MailMessage,
+} from '../src/mail/mailer.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
 
 interface Family {
@@ -19,12 +23,17 @@ describe('family invites (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   const sent: MailMessage[] = [];
-  let failNextSend = false;
+  let failNextSend: 'failed' | 'timeout' | null = null;
   const mailer = {
     send: (m: MailMessage) => {
       if (failNextSend) {
-        failNextSend = false;
-        return Promise.reject(new ServiceUnavailableException());
+        const kind = failNextSend;
+        failNextSend = null;
+        return Promise.reject(
+          kind === 'timeout'
+            ? new MailDeliveryUnknownError()
+            : new ServiceUnavailableException(),
+        );
       }
       sent.push(m);
       return Promise.resolve();
@@ -249,11 +258,18 @@ describe('family invites (e2e)', () => {
   it('does not keep the invite when the mail cannot be sent', async () => {
     const mama = await signup('ママ');
     const [family] = await families(mama.token);
-    failNextSend = true;
+    failNextSend = 'failed';
     await invite(mama.token, family.id, 'x@example.com').expect(503);
     expect(
       await prisma.familyInvite.count({ where: { familyId: family.id } }),
     ).toBe(0);
+
+    // 時間切れは「届いたかもしれない」ので招待を残す（届いたメールのリンクが使えるように）
+    failNextSend = 'timeout';
+    await invite(mama.token, family.id, 'y@example.com').expect(503);
+    expect(
+      await prisma.familyInvite.count({ where: { familyId: family.id } }),
+    ).toBe(1);
   });
 
   it('limits invites and rejects inviting existing members', async () => {
