@@ -15,6 +15,7 @@ import 'features/records/growth_record.dart';
 import 'features/records/record_form_screen.dart';
 
 typedef NewRecordArgs = ({String childId, RecordType type, DateTime day});
+typedef EditRecordArgs = ({String childId, GrowthRecord record});
 
 const _publicPaths = {'/login', '/signup'};
 
@@ -65,6 +66,17 @@ final routerProvider = Provider<GoRouter>((ref) {
             childId: args.childId,
             type: args.type,
             initialDay: args.day,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/records/edit',
+        redirect: (_, state) => state.extra is EditRecordArgs ? null : '/',
+        builder: (_, state) {
+          final args = state.extra! as EditRecordArgs;
+          return RecordFormScreen.edit(
+            childId: args.childId,
+            record: args.record,
           );
         },
       ),

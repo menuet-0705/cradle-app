@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
@@ -77,7 +78,7 @@ class RecordsTab extends ConsumerWidget {
                           for (final group in groupRecords(items)) ...[
                             _GroupHeader(group),
                             for (final record in group.records) ...[
-                              _RecordTile(record: record),
+                              _RecordTile(childId: childId, record: record),
                               const Divider(height: 1),
                             ],
                           ],
@@ -116,8 +117,9 @@ class _GroupHeader extends StatelessWidget {
 }
 
 class _RecordTile extends ConsumerWidget {
-  const _RecordTile({required this.record});
+  const _RecordTile({required this.childId, required this.record});
 
+  final String childId;
   final GrowthRecord record;
 
   Future<void> _delete(BuildContext context, WidgetRef ref) async {
@@ -157,6 +159,11 @@ class _RecordTile extends ConsumerWidget {
         : '${time.format(record.startedAt)}〜${time.format(record.endedAt!)}';
     final note = record.type == RecordType.meal ? null : record.note;
     return ListTile(
+      // タップで修正画面を開く
+      onTap: () => context.push(
+        '/records/edit',
+        extra: (childId: childId, record: record),
+      ),
       leading: CircleAvatar(child: Icon(record.type.icon)),
       title: Text('${record.label}  ${record.summary}'),
       subtitle: Text(

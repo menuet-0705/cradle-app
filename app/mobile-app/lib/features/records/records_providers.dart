@@ -52,6 +52,12 @@ class RecordsRepository {
     );
   }
 
+  /// 記録の修正（種類は変えられない）。体重・食事を別の記録がある日（・区分）に移すと 409
+  Future<void> update(String recordId, NewRecord record) async {
+    final tz = record.type.oncePerDay ? await deviceTimeZone() : null;
+    await _dio.patch<void>('/records/$recordId', data: record.toJson(tz: tz));
+  }
+
   Future<void> delete(String recordId) =>
       _dio.delete<void>('/records/$recordId');
 

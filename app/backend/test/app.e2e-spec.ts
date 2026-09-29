@@ -560,6 +560,213 @@ describe('cradle API (e2e)', () => {
       expect(milk.body).toMatchObject({ mealSlot: null });
     });
 
+    it('updates a record without breaking one-per-day rules', async () => {
+      const { accessToken } = await signup();
+      const h = auth(accessToken);
+      const child = await api()
+        .post('/api/v1/children')
+        .set(h)
+        .send({ name: 'しろう', birthDate: '2025-04-01' })
+        .expect(201);
+      const childId = (child.body as { id: string }).id;
+      const create = async (body: object) =>
+        (
+          (
+            await api()
+              .post(`/api/v1/children/${childId}/records`)
+              .set(h)
+              .send(body)
+              .expect(201)
+          ).body as { id: string }
+        ).id;
+      const patch = (id: string, body: object) =>
+        api().patch(`/api/v1/records/${id}`).set(h).send(body);
+      const tz = 'Asia/Tokyo';
+
+      // ミルクの量・メモ、睡眠の時刻を修正できる
+      const milk = await create({
+        type: 'MILK',
+        startedAt: '2026-08-28T09:00:00+09:00',
+        amountMl: 100,
+        note: 'x',
+      });
+      const updatedMilk = await patch(milk, {
+        type: 'MILK',
+        startedAt: '2026-08-28T09:30:00+09:00',
+        amountMl: 140,
+      }).expect(200);
+      expect(updatedMilk.body).toMatchObject({
+        id: milk,
+        amountMl: 140,
+        note: null,
+        startedAt: '2026-08-28T00:30:00.000Z',
+      });
+      const sleep = await create({
+        type: 'SLEEP',
+        startedAt: '2026-08-28T13:00:00+09:00',
+        endedAt: '2026-08-28T14:00:00+09:00',
+      });
+      await patch(sleep, {
+        type: 'SLEEP',
+        startedAt: '2026-08-28T13:00:00+09:00',
+        endedAt: '2026-08-28T15:30:00+09:00',
+      })
+        .expect(200)
+        .expect((res) =>
+          expect(res.body).toMatchObject({
+            endedAt: '2026-08-28T06:30:00.000Z',
+          }),
+        );
+      // 種類ごとの検証は作成と同じ（終了が開始より前・未来の時刻は 400）
+      await patch(sleep, {
+        type: 'SLEEP',
+        startedAt: '2026-08-28T13:00:00+09:00',
+        endedAt: '2026-08-28T12:00:00+09:00',
+      }).expect(400);
+      await patch(milk, {
+        type: 'MILK',
+        startedAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        amountMl: 100,
+      }).expect(400);
+      // 種類は変えられない
+      await patch(milk, {
+        type: 'MEAL',
+        startedAt: '2026-08-28T09:00:00+09:00',
+        mealSlot: 'BREAKFAST',
+        tz,
+        note: 'パン',
+      })
+        .expect(400)
+        .expect((res) =>
+          expect(res.body).toMatchObject({ code: 'TYPE_MISMATCH' }),
+        );
+
+      // 体重: 空いている日へは移せる。別の体重がある日へは 409
+      await create({
+        type: 'WEIGHT',
+        startedAt: '2026-08-27T08:00:00+09:00',
+        weightG: 7000,
+        tz,
+      });
+      const w28 = await create({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T08:00:00+09:00',
+        weightG: 7050,
+        tz,
+      });
+      await patch(w28, {
+        type: 'WEIGHT',
+        startedAt: '2026-08-27T20:00:00+09:00',
+        weightG: 7050,
+        tz,
+      })
+        .expect(409)
+        .expect((res) =>
+          expect(res.body).toMatchObject({ code: 'DUPLICATE_RECORD' }),
+        );
+      // 同じ日のまま値だけ直すのは、自分自身とは重複しない
+      await patch(w28, {
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T09:00:00+09:00',
+        weightG: 7060,
+        tz,
+      }).expect(200);
+      await patch(w28, {
+        type: 'WEIGHT',
+        startedAt: '2026-08-26T08:00:00+09:00',
+        weightG: 7060,
+        tz,
+      }).expect(200);
+      const weights = await api()
+        .get(`/api/v1/children/${childId}/stats/weight`)
+        .set(h)
+        .expect(200);
+      expect(weights.body).toEqual([
+        { startedAt: '2026-08-25T23:00:00.000Z', weightG: 7060 },
+        { startedAt: '2026-08-26T23:00:00.000Z', weightG: 7000 },
+      ]);
+
+      // 食事: 空いている区分へは変えられる。同じ日・同じ区分に別の食事があれば 409
+      await create({
+        type: 'MEAL',
+        startedAt: '2026-08-28T07:00:00+09:00',
+        mealSlot: 'BREAKFAST',
+        tz,
+        note: 'パン',
+      });
+      const lunch = await create({
+        type: 'MEAL',
+        startedAt: '2026-08-28T12:00:00+09:00',
+        mealSlot: 'LUNCH',
+        tz,
+        note: 'うどん',
+      });
+      await patch(lunch, {
+        type: 'MEAL',
+        startedAt: '2026-08-28T12:00:00+09:00',
+        mealSlot: 'BREAKFAST',
+        tz,
+        note: 'うどん',
+      }).expect(409);
+      await patch(lunch, {
+        type: 'MEAL',
+        startedAt: '2026-08-28T15:00:00+09:00',
+        mealSlot: 'AFTERNOON_SNACK',
+        tz,
+        note: 'ヨーグルト',
+      })
+        .expect(200)
+        .expect((res) =>
+          expect(res.body).toMatchObject({
+            mealSlot: 'AFTERNOON_SNACK',
+            note: 'ヨーグルト',
+          }),
+        );
+
+      // 以前から同じ日に重複している体重も、日付を変えなければ値を直せる
+      const legacy = await prisma.record.create({
+        data: {
+          childId,
+          type: 'WEIGHT',
+          startedAt: new Date('2026-08-26T10:00:00+09:00'),
+          weightG: 7070,
+        },
+      });
+      await patch(legacy.id, {
+        type: 'WEIGHT',
+        startedAt: '2026-08-26T11:00:00+09:00',
+        weightG: 7080,
+        tz,
+      }).expect(200);
+
+      // 他の家族の記録・存在しない記録は 404（修正されない）
+      const other = await signup('B');
+      await api()
+        .patch(`/api/v1/records/${milk}`)
+        .set(auth(other.accessToken))
+        .send({
+          type: 'MILK',
+          startedAt: '2026-08-28T09:30:00+09:00',
+          amountMl: 10,
+        })
+        .expect(404);
+      await patch('00000000-0000-4000-8000-000000000000', {
+        type: 'MILK',
+        startedAt: '2026-08-28T09:30:00+09:00',
+        amountMl: 10,
+      }).expect(404);
+      const list = await api()
+        .get(`/api/v1/children/${childId}/records`)
+        .query({
+          from: '2026-08-28T00:00:00+09:00',
+          to: '2026-08-29T00:00:00+09:00',
+          type: 'MILK',
+        })
+        .set(h)
+        .expect(200);
+      expect(list.body).toMatchObject([{ id: milk, amountMl: 140 }]);
+    });
+
     it("does not expose another family's children or records", async () => {
       const owner = await signup('A');
       const other = await signup('B');

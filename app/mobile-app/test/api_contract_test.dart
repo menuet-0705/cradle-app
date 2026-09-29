@@ -85,10 +85,32 @@ void main() {
       );
     }
 
-    final day = await records.listForDay(child.id, now);
+    var day = await records.listForDay(child.id, now);
+    // 記録の修正（種類ごとの本文の形・タイムゾーンの付け方が作成と同じであること）
+    final milkRecord = day.firstWhere((r) => r.type == RecordType.milk);
+    await records.update(
+      milkRecord.id,
+      NewRecord(
+        type: RecordType.milk,
+        startedAt: milkRecord.startedAt,
+        amountMl: 130,
+      ),
+    );
+    final breakfast = day.firstWhere((r) => r.type == RecordType.meal);
+    await records.update(
+      breakfast.id,
+      NewRecord(
+        type: RecordType.meal,
+        startedAt: breakfast.startedAt,
+        mealSlot: MealSlot.breakfast,
+        note: 'おにぎり（修正）',
+      ),
+    );
+    day = await records.listForDay(child.id, now);
+    expect(day.firstWhere((r) => r.type == RecordType.milk).amountMl, 130);
     final meals = day.where((r) => r.type == RecordType.meal);
     expect(meals.single.mealSlot, MealSlot.breakfast);
-    expect(meals.single.note, 'おにぎり');
+    expect(meals.single.note, 'おにぎり（修正）');
     expect(day.map((r) => r.type).toSet(), {
       RecordType.milk,
       RecordType.weight,
@@ -98,7 +120,7 @@ void main() {
     });
 
     final milk = await records.milkDaily(child.id, from: now, to: now);
-    expect(milk.single.totalMl, 120);
+    expect(milk.single.totalMl, 130);
     expect((await records.weightSeries(child.id)).single.weightG, 5300);
 
     // AI による分析（ローカルでは AI 未設定のこともあるので、生成はせず読み取りと設定だけ確認する）

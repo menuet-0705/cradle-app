@@ -8,18 +8,29 @@ import '../../core/api_client.dart';
 import 'growth_record.dart';
 import 'records_providers.dart';
 
-/// 記録の入力。種類ごとに必要な項目だけを出す
+/// 記録の入力（新規・修正）。種類ごとに必要な項目だけを出す
 class RecordFormScreen extends ConsumerStatefulWidget {
   const RecordFormScreen({
     super.key,
     required this.childId,
     required this.type,
     required this.initialDay,
-  });
+  }) : record = null;
+
+  /// 登録済みの記録の修正。入力欄は記録の値で埋める
+  RecordFormScreen.edit({
+    super.key,
+    required this.childId,
+    required GrowthRecord this.record,
+  }) : type = record.type,
+       initialDay = DateUtils.dateOnly(record.startedAt);
 
   final String childId;
   final RecordType type;
   final DateTime initialDay;
+
+  /// 修正する記録（新規なら null）
+  final GrowthRecord? record;
 
   @override
   ConsumerState<RecordFormScreen> createState() => _RecordFormScreenState();
@@ -39,9 +50,22 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   ProviderSubscription<AsyncValue<List<GrowthRecord>>>? _dayRecord;
   bool _edited = false;
 
+  bool get _isEdit => widget.record != null;
+
   @override
   void initState() {
     super.initState();
+    if (widget.record case final r?) {
+      _startedAt = r.startedAt;
+      _endedAt = r.endedAt ?? r.startedAt;
+      _amount.text = r.amountMl?.toString() ?? '';
+      _weightKg.text = r.weightG == null ? '' : (r.weightG! / 1000).toString();
+      _mealSlot = r.mealSlot ?? MealSlot.at(r.startedAt);
+      // 区分は記録のものを保つ（時刻を変えても追従させない）
+      _slotChosen = true;
+      _note.text = r.note ?? '';
+      return;
+    }
     // 今日なら現在時刻、過去の日なら「その日の現在と同じ時刻」を初期値にする
     final now = DateTime.now();
     final d = widget.initialDay;
@@ -81,10 +105,13 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
         day: DateUtils.dateOnly(at),
       ));
 
-  /// 保存すると上書きされる記録（一覧は新しい順なので、サーバーが上書きする 1 件と同じ）
+  /// 選んでいる日（食事は区分も）にある、同じ種類の別の記録。
+  /// 新規では保存すると上書きされる記録（一覧は新しい順なので、サーバーが上書きする 1 件と同じ）、
+  /// 修正では重複になるため保存できない原因の記録
   GrowthRecord? _existingOf(List<GrowthRecord>? records) => records
       ?.where(
         (r) =>
+            r.id != widget.record?.id &&
             r.type == widget.type &&
             (r.type != RecordType.meal || r.mealSlot == _mealSlot),
       )
@@ -128,24 +155,23 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
     }
     setState(() => _saving = true);
     try {
-      await ref
-          .read(recordsRepositoryProvider)
-          .create(
-            widget.childId,
-            NewRecord(
-              type: type,
-              startedAt: _startedAt,
-              endedAt: type == RecordType.sleep ? _endedAt : null,
-              amountMl: type == RecordType.milk
-                  ? int.parse(_amount.text)
-                  : null,
-              weightG: type == RecordType.weight
-                  ? (double.parse(_weightKg.text) * 1000).round()
-                  : null,
-              mealSlot: type == RecordType.meal ? _mealSlot : null,
-              note: _note.text.trim(),
-            ),
-          );
+      final input = NewRecord(
+        type: type,
+        startedAt: _startedAt,
+        endedAt: type == RecordType.sleep ? _endedAt : null,
+        amountMl: type == RecordType.milk ? int.parse(_amount.text) : null,
+        weightG: type == RecordType.weight
+            ? (double.parse(_weightKg.text) * 1000).round()
+            : null,
+        mealSlot: type == RecordType.meal ? _mealSlot : null,
+        note: _note.text.trim(),
+      );
+      final repo = ref.read(recordsRepositoryProvider);
+      if (widget.record case final r?) {
+        await repo.update(r.id, input);
+      } else {
+        await repo.create(widget.childId, input);
+      }
       invalidateRecords(ref);
       if (mounted) context.pop();
     } catch (e) {
@@ -165,13 +191,27 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   Widget build(BuildContext context) {
     final type = widget.type;
     final isSleep = type == RecordType.sleep;
-    // 選んでいる日（食事は区分も）が記録済みなら、保存は上書きになる
-    final overwrites =
-        type.oncePerDay &&
-        _existingOf(ref.watch(_dayRecords(_startedAt)).value) != null;
+    // 選んでいる日（食事は区分も）に別の記録があれば、新規は上書き、修正は重複で保存できない
+    final dayRecords = type.oncePerDay
+        ? ref.watch(_dayRecords(_startedAt))
+        : null;
+    final hasOther = _existingOf(dayRecords?.value) != null;
+    final overwrites = hasOther && !_isEdit;
+    // 修正で日付・区分を変えたときだけ重複を確かめる（サーバーと同じ。以前からの重複も値は直せる）
+    final original = widget.record;
+    final moved =
+        original != null &&
+        (!DateUtils.isSameDay(_startedAt, original.startedAt) ||
+            (type == RecordType.meal && _mealSlot != original.mealSlot));
+    final duplicate = hasOther && moved;
+    // 移動先の日の記録を読み込み中は、重複か分からないので保存させない
+    // （取得に失敗したときは保存を許し、サーバーの 409 で止める）
+    final checking = moved && type.oncePerDay && dayRecords!.isLoading;
     final target = type == RecordType.meal ? _mealSlot.label : type.label;
+    final errorColor = Theme.of(context).colorScheme.error;
+    final title = _isEdit ? '修正' : (overwrites ? '更新' : '記録');
     return Scaffold(
-      appBar: AppBar(title: Text('${type.label}を${overwrites ? '更新' : '記録'}')),
+      appBar: AppBar(title: Text('${type.label}を$title')),
       body: Form(
         key: _formKey,
         child: ListView(
@@ -185,6 +225,22 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                     const Icon(Icons.info_outline),
                     const SizedBox(width: 8),
                     Expanded(child: Text('この日の$targetは記録済みです。保存すると上書きされます')),
+                  ],
+                ),
+              ),
+            if (duplicate)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, color: errorColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'この日の$targetはすでに記録されています。日付を変えるか、そちらの記録を修正してください',
+                        style: TextStyle(color: errorColor),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -204,7 +260,10 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                   _startedAt = v;
                   _mealSlot = slot;
                 });
-                if (type.oncePerDay && (dayChanged || slotChanged)) {
+                // 修正では、他の記録の内容で入力欄を埋め直さない
+                if (type.oncePerDay &&
+                    !_isEdit &&
+                    (dayChanged || slotChanged)) {
                   _followDayRecord();
                 }
               },
@@ -223,7 +282,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                         _slotChosen = true;
                         if (slot == _mealSlot) return;
                         setState(() => _mealSlot = slot);
-                        _followDayRecord();
+                        if (!_isEdit) _followDayRecord();
                       },
                     ),
                 ],
@@ -298,7 +357,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: _saving ? null : _save,
+              onPressed: _saving || duplicate || checking ? null : _save,
               child: Text(overwrites ? '更新する' : '保存する'),
             ),
           ],

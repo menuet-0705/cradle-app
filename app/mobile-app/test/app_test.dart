@@ -5,6 +5,7 @@ import 'package:cradle/features/children/child.dart';
 import 'package:cradle/features/children/children_providers.dart';
 import 'package:cradle/features/records/growth_record.dart';
 import 'package:cradle/features/records/records_providers.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,14 +23,40 @@ Future<Session> _session({bool loggedIn = false}) async {
   return session;
 }
 
+/// 保存（新規・修正）の呼び出しを記録するだけの偽のリポジトリ
+class _FakeRecordsRepository implements RecordsRepository {
+  _FakeRecordsRepository({this.updateError});
+
+  final Object? updateError;
+  final created = <NewRecord>[];
+  final updated = <(String, NewRecord)>[];
+
+  @override
+  Future<void> create(String childId, NewRecord record) async =>
+      created.add(record);
+
+  @override
+  Future<void> update(String recordId, NewRecord record) async {
+    if (updateError case final e?) throw e;
+    updated.add((recordId, record));
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 Widget _app(
   Session session, {
+  RecordsRepository? repo,
   List<Child> children = const [],
   bool withWeight = false,
   bool withMeal = false,
+  bool withLunch = false,
+  bool withLegacyWeight = false,
 }) => ProviderScope(
   overrides: [
     sessionProvider.overrideWithValue(session),
+    if (repo != null) recordsRepositoryProvider.overrideWithValue(repo),
     childrenProvider.overrideWith((ref) async => children),
     weightSeriesProvider.overrideWith((ref, childId) async => const []),
     milkDailyProvider.overrideWith((ref, childId) async => const []),
@@ -38,7 +65,8 @@ Widget _app(
         GrowthRecord(
           id: 'r1',
           type: RecordType.milk,
-          startedAt: arg.day.add(const Duration(hours: 9)),
+          // 0 時にしておき、いつテストしても修正の保存が「未来の時刻」にならないようにする
+          startedAt: arg.day,
           amountMl: 120,
         ),
         if (withWeight)
@@ -56,6 +84,22 @@ Widget _app(
             startedAt: arg.day.add(const Duration(hours: 7)),
             mealSlot: MealSlot.breakfast,
             note: 'パン',
+          ),
+        // 1 日 1 件になる前に登録された、同じ日の 2 件目の体重
+        if (withLegacyWeight)
+          GrowthRecord(
+            id: 'w0',
+            type: RecordType.weight,
+            startedAt: arg.day.add(const Duration(hours: 6)),
+            weightG: 5300,
+          ),
+        if (withLunch)
+          GrowthRecord(
+            id: 'f2',
+            type: RecordType.meal,
+            startedAt: arg.day.add(const Duration(hours: 12)),
+            mealSlot: MealSlot.lunch,
+            note: 'うどん',
           ),
       ],
     ),
@@ -241,6 +285,164 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.widgetWithText(TextFormField, 'うどん'), findsOneWidget);
     expect(find.text('この日の朝食は記録済みです。保存すると上書きされます'), findsOneWidget);
+  });
+
+  testWidgets('tapping a record opens it for editing', (tester) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: children,
+        withWeight: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('ミルク  120 ml'));
+    await tester.pumpAndSettle();
+    expect(find.text('ミルクを修正'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '120'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '保存する'), findsOneWidget);
+
+    // 体重の修正では、自分自身は重複として扱わない
+    await tester.tap(find.byType(BackButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('体重  5.25 kg'));
+    await tester.pumpAndSettle();
+    expect(find.text('体重を修正'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '5.25'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '朝'), findsOneWidget);
+    expect(find.textContaining('すでに記録されています'), findsNothing);
+    expect(find.textContaining('上書き'), findsNothing);
+  });
+
+  testWidgets('saving an edit updates the record and closes the form', (
+    tester,
+  ) async {
+    final repo = _FakeRecordsRepository();
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        repo: repo,
+        children: [
+          Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ミルク  120 ml'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, '120'), '150');
+    await tester.tap(find.widgetWithText(FilledButton, '保存する'));
+    await tester.pumpAndSettle();
+
+    expect(repo.created, isEmpty);
+    final (id, input) = repo.updated.single;
+    expect(id, 'r1');
+    expect(input.type, RecordType.milk);
+    expect(input.amountMl, 150);
+    expect(input.startedAt, today());
+    // 保存したら一覧に戻る
+    expect(find.text('ミルクを修正'), findsNothing);
+    expect(find.byTooltip('記録を追加'), findsOneWidget);
+  });
+
+  testWidgets('shows why an edit was rejected as a duplicate', (tester) async {
+    final req = RequestOptions(path: '/records/r1');
+    final repo = _FakeRecordsRepository(
+      updateError: DioException(
+        requestOptions: req,
+        response: Response(
+          requestOptions: req,
+          statusCode: 409,
+          data: {'code': 'DUPLICATE_RECORD'},
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        repo: repo,
+        children: [
+          Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('ミルク  120 ml'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, '保存する'));
+    await tester.pumpAndSettle();
+    expect(find.text('その日の記録はすでにあります。日付を変えるか、そちらの記録を修正してください'), findsOneWidget);
+    // 画面は閉じず、入力を残す
+    expect(find.text('ミルクを修正'), findsOneWidget);
+  });
+
+  testWidgets('an older duplicate can be edited on the same day', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: [
+          Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+        ],
+        withWeight: true,
+        withLegacyWeight: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('体重  5.30 kg'));
+    await tester.pumpAndSettle();
+    expect(find.text('体重を修正'), findsOneWidget);
+    // 日付を変えない修正は、同じ日に別の体重があっても止めない（サーバーと同じ）
+    expect(find.textContaining('すでに記録されています'), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '保存する'))
+          .onPressed,
+      isNotNull,
+    );
+  });
+
+  testWidgets('editing a meal into a taken slot is blocked', (tester) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: children,
+        withMeal: true,
+        withLunch: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('昼食  うどん'));
+    await tester.pumpAndSettle();
+    expect(find.text('食事を修正'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'うどん'), findsOneWidget);
+    FilledButton save() =>
+        tester.widget<FilledButton>(find.widgetWithText(FilledButton, '保存する'));
+    expect(save().onPressed, isNotNull);
+
+    // 朝食はすでにあるので保存できない。入力欄は朝食の内容で埋め直さない
+    await tester.tap(find.widgetWithText(ChoiceChip, '朝食'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('この日の朝食はすでに記録されています。日付を変えるか、そちらの記録を修正してください'),
+      findsOneWidget,
+    );
+    expect(save().onPressed, isNull);
+    expect(find.widgetWithText(TextFormField, 'うどん'), findsOneWidget);
+
+    // 空いている区分に変えれば保存できる
+    await tester.tap(find.widgetWithText(ChoiceChip, '夕食'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('すでに記録されています'), findsNothing);
+    expect(save().onPressed, isNotNull);
   });
 
   testWidgets('keeps the selected tab in the URL without adding history', (

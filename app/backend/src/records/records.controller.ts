@@ -6,6 +6,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -41,6 +42,17 @@ export class RecordsController {
     @Body(new ZodValidationPipe(createRecordSchema)) dto: CreateRecordDto,
   ) {
     return this.records.create(user.id, childId, dto);
+  }
+
+  @Patch('records/:recordId')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('recordId', ParseUUIDPipe) recordId: string,
+    // 本文は作成と同じ形（種類ごとの必須項目・未来の時刻の拒否も同じ）。
+    // 部分更新ではなく全項目の置き換え（省いたメモは消える）
+    @Body(new ZodValidationPipe(createRecordSchema)) dto: CreateRecordDto,
+  ) {
+    return this.records.update(user.id, recordId, dto);
   }
 
   @Delete('records/:recordId')
