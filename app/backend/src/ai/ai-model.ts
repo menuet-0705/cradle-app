@@ -43,6 +43,8 @@ export class LangChainAiModel implements AiModel {
   constructor(
     readonly name: string,
     private readonly chat: BaseChatModel,
+    /** ログで伏せる値（API キー） */
+    private readonly secrets: string[] = [],
   ) {}
 
   async generate<T extends Record<string, unknown>>(
@@ -58,9 +60,8 @@ export class LangChainAiModel implements AiModel {
           timeout: LLM_TIMEOUT_MS,
         });
     } catch (e) {
-      // 例外の内容にはリクエスト内容や API キーの一部が含まれうるので、名前だけ出す
       this.logger.error(
-        `LLM call failed (${options.name}): ${(e as Error).name}`,
+        `LLM call failed (${options.name}): ${describeLlmError(e, this.secrets)}`,
       );
       throw new BadGatewayException('AI generation failed');
     }
@@ -72,6 +73,64 @@ export class LangChainAiModel implements AiModel {
     }
     return parsed.data;
   }
+}
+
+// API キーらしき文字列（Google: AIza…、OpenAI: sk-…、Anthropic: sk-ant-…、LangSmith: lsv2_…、Bearer …、
+// URL や JSON の key / api_key）。今の SDK はキーをメッセージに入れないが、SDK の更新に備えて二重に伏せる
+const API_KEY_LIKE: RegExp[] = [
+  /AIza[0-9A-Za-z_-]{10,}/g,
+  /\bsk-[0-9A-Za-z_-]{10,}/g,
+  /\blsv2_[0-9A-Za-z_]+/g,
+  /(Bearer\s+)\S+/gi,
+  /([?&](?:x-)?(?:api[_-]?)?key=)[^&\s]+/gi,
+  // JSON の "key":"…"（値の中のエスケープ \" も含めて伏せる）
+  /("(?:x-)?(?:api[_-]?)?key"\s*:\s*")(?:\\.|[^"\\])*/gi,
+  // 二重に JSON 化された \"key\":\"…\"（値は \" で終わる）
+  /(\\"(?:x-)?(?:api[_-]?)?key\\"\s*:\s*\\")(?:[^"\\]|\\(?!"))*/gi,
+  // ヘッダーの形（x-api-key: …）
+  /((?:x-)?api[_-]?key\s*:\s*)[^\s,;"]+/gi,
+];
+const MAX_REASON_LENGTH = 500;
+
+/**
+ * ログに出すエラーの説明。原因（モデル名の誤り・キーの無効・利用枠の超過など）が分かるよう、
+ * プロバイダの API が返したエラー（HTTP ステータス 400〜599 を持つ Error）だけは理由も 1 行で出す。
+ * それ以外（出力の解析エラーなど）のメッセージには LLM の出力＝記録の内容が含まれうるので、種類だけにする。
+ * 注意: status を持つ例外を投げる処理（独自のパーサーなど）を LLM の呼び出し経路に加えるときは、
+ * そのメッセージに記録の内容が入らないことを確かめる
+ */
+export function describeLlmError(e: unknown, secrets: string[] = []): string {
+  if (!(e instanceof Error)) return 'Error';
+  // name が付いていればそれを使う（時間切れの DOMException は TimeoutError、LangChain の枠切れは
+  // RateLimitQuotaExhaustedError など）。SDK の多くは name を設定しないので、そのときはクラス名にする
+  const name =
+    e.name && e.name !== 'Error' ? e.name : e.constructor?.name || 'Error';
+  const status = (e as { status?: unknown }).status;
+  if (
+    typeof status !== 'number' ||
+    !Number.isInteger(status) ||
+    status < 400 ||
+    status > 599
+  ) {
+    // 429 や 5xx は LangChain が再試行を続け、応答待ちの上限で打ち切られると status のない例外になる
+    return /Timeout|Abort/.test(name)
+      ? `${name} (timed out or aborted; the provider may have kept returning 429 or 5xx)`
+      : name;
+  }
+  let reason = e.message;
+  // 設定したキーそのものは、形に頼らず完全一致で伏せる
+  for (const secret of secrets) {
+    if (secret) reason = reason.replaceAll(secret, '***');
+  }
+  for (const pattern of API_KEY_LIKE) {
+    reason = reason.replace(pattern, (_, prefix?: string) =>
+      typeof prefix === 'string' ? `${prefix}***` : '***',
+    );
+  }
+  // 改行・制御文字・双方向テキストの制御文字は空白にして 1 行にまとめる（ログの分断や偽の行・表示の偽装を防ぐ）
+  // eslint-disable-next-line no-control-regex
+  reason = reason.replace(/[\s\x00-\x1f\x7f-\x9f‎‏‪-‮⁦-⁩]+/g, ' ').trim();
+  return `${name} status=${status} ${reason.slice(0, MAX_REASON_LENGTH)}`;
 }
 
 /** AI が未設定のとき。呼ばれたら 503 */
@@ -106,6 +165,7 @@ export function createAiModel(config: AppConfig): AiModel {
   return new LangChainAiModel(
     `${ai.provider}:${ai.model}`,
     createChatModel(ai),
+    [ai.apiKey],
   );
 }
 

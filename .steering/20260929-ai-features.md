@@ -238,3 +238,10 @@ model WeeklyReport {
   - nft への渡し方は @vercel/node に合わせる（base / processCwd / mixedModules）。失敗時も一時ディレクトリは必ず削除する
 - レビュー（code-reviewer / security-reviewer、各 2 回）: Critical・High・Medium なし
   - 残した Low: 最初の失敗で止まる（速く失敗させるため）、確認できるのは起動までに読み込まれるモジュールだけ、@vercel/nft の版は Vercel のビルドログの @vercel/node に合わせて手で更新が必要、ビルド中に @vercel/nft などの依存が本物の環境変数を持つ親プロセスで動く（版の固定と lockfile で運用。ビルドに不要な秘密は Vercel で Runtime 専用にするのが望ましい）
+
+### デプロイ後の不具合 2: 食事の提案が `LLM call failed (meal_analysis): Error` で失敗（2026-09-29）
+- 調査: fetch を差し替えて手元で確認したところ、Gemini が正常に応答すればグラフは最後まで動く（リクエストは responseSchema + application/json で、スキーマの変換も問題なし）。Google の API がエラー（モデル名の 404・キーの無効・429 など）を返していると判断
+- 原因が特定できなかった理由: ログにエラーの名前しか出していなかった。@google/generative-ai などの SDK は name を設定しないので、常に `Error` だった
+- 対応: `describeLlmError`（ai-model.ts）で、プロバイダの API エラー（Error かつ status 400〜599）だけ、クラス名・ステータス・理由（1 行、500 文字まで、API キーは設定値の完全一致と形のパターンで伏せ字）をログに出す。それ以外は LLM の出力が含まれうるので名前だけ。時間切れは「429 や 5xx が続いた可能性」を併記
+- 利用者の確認事項: 既定のモデル名 `gemini-3.8-flash` は Web 検索からの推定で、キーで使えるかは未確認。`GET /v1beta/models` で使えるモデル名を確認し、違えば `LLM_MODEL` で指定する
+- レビューで対応不要とした点: ログに組織 ID・プロジェクト番号・request_id が出ることがある（秘密ではない）。プロバイダのエラー本文にリクエスト内容が入る可能性は極めて小さい（3 社ともエラー本文はサーバーが返したものだけで組み立てる）
