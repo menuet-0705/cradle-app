@@ -1,0 +1,3 @@
+[mcp_servers.drawio]
+command = "npx"
+args = ["-y", "@drawio/mcp"]
