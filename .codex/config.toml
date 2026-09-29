@@ -1,3 +1,7 @@
+# >>> generated from .mcp.json (node .llm-notes/sync.mjs)
+
 [mcp_servers.drawio]
 command = "npx"
 args = ["-y", "@drawio/mcp"]
+
+# <<< generated from .mcp.json
