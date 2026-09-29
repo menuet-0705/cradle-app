@@ -4,6 +4,7 @@
 import 'dart:io';
 
 import 'package:cradle/core/api_client.dart';
+import 'package:cradle/features/ai/ai_providers.dart';
 import 'package:cradle/features/auth/auth_repository.dart';
 import 'package:cradle/features/auth/session.dart';
 import 'package:cradle/features/children/child.dart';
@@ -78,6 +79,16 @@ void main() {
     final milk = await records.milkDaily(child.id, from: now, to: now);
     expect(milk.single.totalMl, 120);
     expect((await records.weightSeries(child.id)).single.weightG, 5250);
+
+    // AI による分析（ローカルでは AI 未設定のこともあるので、生成はせず読み取りと設定だけ確認する）
+    final ai = AiRepository(dio);
+    final meal = await ai.latestMealSuggestion(child.id);
+    expect(meal.suggestion, isNull);
+    expect(meal.remainingToday, 3);
+    expect(await ai.weeklyReports(child.id), isEmpty);
+    expect(await ai.weeklyReportEmail(), isTrue);
+    expect(await ai.setWeeklyReportEmail(false), isFalse);
+    expect(await ai.weeklyReportEmail(), isFalse);
 
     // アクセストークンを壊しても、リフレッシュして再送できる
     await session.save(

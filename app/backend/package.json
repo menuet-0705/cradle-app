@@ -28,6 +28,11 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@langchain/anthropic": "^1.5.11",
+    "@langchain/core": "^1.2.13",
+    "@langchain/google-genai": "^2.3.2",
+    "@langchain/langgraph": "^1.4.18",
+    "@langchain/openai": "^1.6.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/core": "^12.0.1",
     "@nestjs/jwt": "^12.0.2",
@@ -35,6 +40,7 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "helmet": "^8.3.0",
+    "langchain": "^1.5.14",
     "nodemailer": "^10.0.12",
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
@@ -65,5 +71,8 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "undici": "^6.29.0"
   }
 }

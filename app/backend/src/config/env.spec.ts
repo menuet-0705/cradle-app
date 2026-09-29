@@ -160,4 +160,80 @@ describe('loadConfig', () => {
       }).mail?.appUrl,
     ).toBe('https://example.com');
   });
+
+  describe('AI', () => {
+    it('is disabled when no API key is set', () => {
+      expect(loadConfig(base).ai).toBeUndefined();
+    });
+
+    it('defaults to Gemini when GOOGLE_API_KEY is set', () => {
+      expect(loadConfig({ ...base, GOOGLE_API_KEY: 'g-key' }).ai).toEqual({
+        provider: 'google',
+        model: 'gemini-3.8-flash',
+        apiKey: 'g-key',
+      });
+    });
+
+    it('switches the provider and model by environment variables only', () => {
+      expect(
+        loadConfig({
+          ...base,
+          LLM_PROVIDER: 'anthropic',
+          LLM_MODEL: 'claude-haiku-4-5',
+          ANTHROPIC_API_KEY: 'a-key',
+          GOOGLE_API_KEY: 'g-key',
+        }).ai,
+      ).toEqual({
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5',
+        apiKey: 'a-key',
+      });
+      expect(
+        loadConfig({ ...base, LLM_PROVIDER: 'openai', OPENAI_API_KEY: 'o' }).ai,
+      ).toMatchObject({ provider: 'openai', apiKey: 'o' });
+    });
+
+    it('fails to start when the chosen provider has no API key', () => {
+      expect(() =>
+        loadConfig({ ...base, LLM_PROVIDER: 'openai', GOOGLE_API_KEY: 'g' }),
+      ).toThrow(/OPENAI_API_KEY/);
+      expect(() => loadConfig({ ...base, LLM_MODEL: 'gemini-x' })).toThrow(
+        /GOOGLE_API_KEY/,
+      );
+      // 別のプロバイダのキーだけがある（LLM_PROVIDER の設定漏れ）
+      expect(() => loadConfig({ ...base, OPENAI_API_KEY: 'o' })).toThrow(
+        /GOOGLE_API_KEY is required for LLM_PROVIDER=google/,
+      );
+    });
+
+    it('rejects unknown providers and never echoes key values', () => {
+      expect(() =>
+        loadConfig({ ...base, LLM_PROVIDER: 'mistral', GOOGLE_API_KEY: 'g' }),
+      ).toThrow(/^Invalid environment variables: LLM_PROVIDER$/);
+      expect(() =>
+        loadConfig({
+          ...base,
+          LLM_PROVIDER: 'openai',
+          LLM_MODEL: 'bad model!',
+          OPENAI_API_KEY: 'sk-secret-value',
+        }),
+      ).toThrow(/^Invalid environment variables: LLM_MODEL$/);
+    });
+  });
+
+  describe('CRON_SECRET', () => {
+    it('requires 32+ characters and rejects placeholders when deployed', () => {
+      expect(() => loadConfig({ ...base, CRON_SECRET: 'short' })).toThrow(
+        /CRON_SECRET/,
+      );
+      const placeholder = {
+        ...base,
+        CRON_SECRET: `change-me-${'x'.repeat(32)}`,
+      };
+      expect(() => loadConfig(placeholder)).not.toThrow();
+      expect(() => loadConfig({ ...placeholder, VERCEL: '1' })).toThrow(
+        /CRON_SECRET/,
+      );
+    });
+  });
 });

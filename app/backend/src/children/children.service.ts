@@ -1,6 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateChildDto, UpdateChildDto } from './children.dto.js';
+
+/** 1 家族あたりのこどもの人数の上限 */
+export const MAX_CHILDREN_PER_FAMILY = 10;
 
 const childSelect = {
   id: true,
@@ -29,15 +36,28 @@ export class ChildrenService {
       orderBy: { createdAt: 'asc' },
     });
     if (!membership) throw new NotFoundException('Family not found');
+    const familyId = membership.familyId;
 
-    return this.prisma.child.create({
-      data: {
-        familyId: membership.familyId,
-        name: dto.name,
-        birthDate: new Date(dto.birthDate),
-        sex: dto.sex ?? null,
-      },
-      select: childSelect,
+    // AI の提案・レポートの費用や通知メールを、こどもを大量に作って増やせないようにする。
+    // 人数の確認と作成を同時リクエストで追い越されないよう、家族ごとのロックを取って 1 件ずつ行う
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('children:create:' || ${familyId}))`;
+      const count = await tx.child.count({ where: { familyId } });
+      if (count >= MAX_CHILDREN_PER_FAMILY) {
+        throw new ConflictException({
+          message: 'Too many children in the family',
+          code: 'TOO_MANY_CHILDREN',
+        });
+      }
+      return tx.child.create({
+        data: {
+          familyId,
+          name: dto.name,
+          birthDate: new Date(dto.birthDate),
+          sex: dto.sex ?? null,
+        },
+        select: childSelect,
+      });
     });
   }
 
