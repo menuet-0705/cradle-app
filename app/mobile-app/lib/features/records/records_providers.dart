@@ -28,7 +28,11 @@ class RecordsRepository {
   static final _date = DateFormat('yyyy-MM-dd');
 
   /// 端末ローカルの1日分
-  Future<List<GrowthRecord>> listForDay(String childId, DateTime day) async {
+  Future<List<GrowthRecord>> listForDay(
+    String childId,
+    DateTime day, {
+    CancelToken? cancelToken,
+  }) async {
     final from = DateTime(day.year, day.month, day.day);
     final to = DateTime(day.year, day.month, day.day + 1);
     final res = await _dio.get<List<dynamic>>(
@@ -37,6 +41,7 @@ class RecordsRepository {
         'from': from.toUtc().toIso8601String(),
         'to': to.toUtc().toIso8601String(),
       },
+      cancelToken: cancelToken,
     );
     return res.data!
         .map((e) => GrowthRecord.fromJson(e as Map<String, dynamic>))
@@ -134,10 +139,11 @@ class SelectedDay extends Notifier<DateTime?> {
     return null;
   }
 
-  void shift(int days) {
-    final base = state ?? today();
-    final next = DateTime(base.year, base.month, base.day + days);
-    state = next == today() ? null : next;
+  /// 表示する日を選ぶ（記録画面のページ送りから呼ぶ。今日より先の日は渡さない）
+  void select(DateTime day) {
+    final date = DateUtils.dateOnly(day);
+    assert(!date.isAfter(today()), 'future day: $date');
+    state = date == today() ? null : date;
   }
 }
 
@@ -146,10 +152,14 @@ final selectedDayProvider = NotifierProvider<SelectedDay, DateTime?>(
 );
 
 final dayRecordsProvider = FutureProvider.autoDispose
-    .family<List<GrowthRecord>, ({String childId, DateTime day})>(
-      (ref, arg) =>
-          ref.watch(recordsRepositoryProvider).listForDay(arg.childId, arg.day),
-    );
+    .family<List<GrowthRecord>, ({String childId, DateTime day})>((ref, arg) {
+      // 記録画面をめくって画面から外れた日は、読み込み途中でも通信を止める
+      final cancel = CancelToken();
+      ref.onDispose(cancel.cancel);
+      return ref
+          .watch(recordsRepositoryProvider)
+          .listForDay(arg.childId, arg.day, cancelToken: cancel);
+    });
 
 final weightSeriesProvider = FutureProvider.autoDispose
     .family<List<WeightPoint>, String>(

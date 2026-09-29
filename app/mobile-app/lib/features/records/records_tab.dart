@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,23 +10,106 @@ import 'growth_record.dart';
 import 'record_groups.dart';
 import 'records_providers.dart';
 
-/// 日付を移動するスワイプとみなす横方向の速さ（px/秒）。ゆっくりしたドラッグでは移動しない
-const _swipeVelocity = 300.0;
+/// さかのぼれる日数（ページ数 - 1）
+const _maxPastDays = 3650;
 
-/// 選択中の日の記録一覧
-class RecordsTab extends ConsumerWidget {
+/// 前後の日へのページ送り（矢印ボタン）の動き
+const _pageDuration = Duration(milliseconds: 300);
+
+/// 選択中の日の記録一覧。1 日を 1 ページにして、左右にめくって日付を移動する（ViewPager と同じ動き）
+class RecordsTab extends ConsumerStatefulWidget {
   const RecordsTab({super.key, required this.childId});
 
   final String childId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final day = ref.watch(selectedDayProvider) ?? today();
-    final records = ref.watch(dayRecordsProvider((childId: childId, day: day)));
-    final selectedDay = ref.read(selectedDayProvider.notifier);
-    void previousDay() => selectedDay.shift(-1);
-    // 今日より先には進めない
-    final nextDay = day.isBefore(today()) ? () => selectedDay.shift(1) : null;
+  ConsumerState<RecordsTab> createState() => _RecordsTabState();
+}
+
+class _RecordsTabState extends ConsumerState<RecordsTab> {
+  /// ページ番号の基準の日（ページ番号 = この日から何日前か）
+  late DateTime _today;
+  late PageController _pages;
+  late final AppLifecycleListener _lifecycle;
+  Timer? _midnight;
+
+  @override
+  void initState() {
+    super.initState();
+    _today = today();
+    _pages = _controller();
+    // 日付が変わったら今日のページを作り直す（アプリに戻ったとき・開いたまま 0 時を過ぎたとき）
+    _lifecycle = AppLifecycleListener(onShow: _followToday);
+    _scheduleMidnight();
+  }
+
+  @override
+  void dispose() {
+    _midnight?.cancel();
+    _lifecycle.dispose();
+    _pages.dispose();
+    super.dispose();
+  }
+
+  // ページ番号は選んでいる日から決めるので、保存されたスクロール位置は使わない
+  PageController _controller() => PageController(
+    initialPage: _pageOf(ref.read(selectedDayProvider) ?? _today),
+    keepPage: false,
+  );
+
+  void _scheduleMidnight() {
+    final now = DateTime.now();
+    final next = DateTime(now.year, now.month, now.day + 1);
+    _midnight = Timer(next.difference(now) + const Duration(seconds: 1), () {
+      _followToday();
+      _scheduleMidnight();
+    });
+  }
+
+  /// 日付が変わっていたら、新しい今日を基準にページを作り直す
+  void _followToday() {
+    final now = today();
+    if (!mounted || now == _today) return;
+    final old = _pages;
+    setState(() {
+      _today = now;
+      _pages = _controller();
+    });
+    // 古い PageView はこのフレームの描画までコントローラを使うので、描画の後で破棄する
+    WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+  }
+
+  // 夏時間の切り替えで 1 日が 23・25 時間になっても日数がずれないよう、UTC の日付で数える。
+  // さかのぼれるのは _maxPastDays まで（それより前の日は最も古いページに寄せる）
+  int _pageOf(DateTime day) =>
+      DateTime.utc(_today.year, _today.month, _today.day)
+          .difference(DateTime.utc(day.year, day.month, day.day))
+          .inDays
+          .clamp(0, _maxPastDays);
+
+  DateTime _dayOf(int page) =>
+      DateTime(_today.year, _today.month, _today.day - page);
+
+  /// 矢印ボタンで動かしている途中の行き先（素早く続けて押したときに、その先へ進めるため）
+  int? _animatingTo;
+
+  /// 矢印ボタン: [delta] 日だけページを動かす（+1 で前の日、-1 で次の日）
+  Future<void> _step(int base, int delta) async {
+    final target = ((_animatingTo ?? base) + delta).clamp(0, _maxPastDays);
+    _animatingTo = target;
+    await _pages.animateToPage(
+      target,
+      duration: _pageDuration,
+      curve: Curves.easeInOut,
+    );
+    if (_animatingTo == target) _animatingTo = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 選んでいる日はページを動かしたときだけ変わる（ページが先に動き、onPageChanged で追従する）
+    final day = ref.watch(selectedDayProvider) ?? _today;
+    final page = _pageOf(day);
 
     return Column(
       children: [
@@ -35,7 +120,7 @@ class RecordsTab extends ConsumerWidget {
               IconButton(
                 tooltip: '前の日',
                 icon: const Icon(Icons.chevron_left),
-                onPressed: previousDay,
+                onPressed: page < _maxPastDays ? () => _step(page, 1) : null,
               ),
               Expanded(
                 child: Text(
@@ -47,48 +132,63 @@ class RecordsTab extends ConsumerWidget {
               IconButton(
                 tooltip: '次の日',
                 icon: const Icon(Icons.chevron_right),
-                onPressed: nextDay,
+                // 今日より先には進めない
+                onPressed: page > 0 ? () => _step(page, -1) : null,
               ),
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
-          // 右スワイプで前の日、左スワイプで次の日（一覧の縦スクロールとは取り合わない）
-          child: GestureDetector(
-            // 読み込み中など、一覧が画面を埋めていないときもスワイプを受け付ける
-            behavior: HitTestBehavior.opaque,
-            onHorizontalDragEnd: (details) {
-              final v = details.primaryVelocity ?? 0;
-              if (v > _swipeVelocity) previousDay();
-              if (v < -_swipeVelocity) nextDay?.call();
-            },
-            child: RefreshIndicator(
-              onRefresh: () => ref.refresh(
-                dayRecordsProvider((childId: childId, day: day)).future,
-              ),
-              child: records.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => _Message(errorMessage(e)),
-                data: (items) => items.isEmpty
-                    ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
-                    : ListView(
-                        padding: const EdgeInsets.only(bottom: 96),
-                        children: [
-                          for (final group in groupRecords(items)) ...[
-                            _GroupHeader(group),
-                            for (final record in group.records) ...[
-                              _RecordTile(childId: childId, record: record),
-                              const Divider(height: 1),
-                            ],
-                          ],
-                        ],
-                      ),
-              ),
-            ),
+          // reverse: 今日（0 ページ目）が右端。右スワイプで前の日、左スワイプで次の日
+          child: PageView.builder(
+            key: ValueKey(_today),
+            controller: _pages,
+            reverse: true,
+            itemCount: _maxPastDays + 1,
+            onPageChanged: (p) =>
+                ref.read(selectedDayProvider.notifier).select(_dayOf(p)),
+            itemBuilder: (_, p) =>
+                _DayRecords(childId: widget.childId, day: _dayOf(p)),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 1 日分（1 ページ）の記録一覧。種類ごとにまとめて出す
+class _DayRecords extends ConsumerWidget {
+  const _DayRecords({required this.childId, required this.day});
+
+  final String childId;
+  final DateTime day;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final provider = dayRecordsProvider((childId: childId, day: day));
+    return RefreshIndicator(
+      onRefresh: () => ref.refresh(provider.future),
+      child: ref
+          .watch(provider)
+          .when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => _Message(errorMessage(e)),
+            data: (items) => items.isEmpty
+                ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
+                : ListView(
+                    padding: const EdgeInsets.only(bottom: 96),
+                    children: [
+                      for (final group in groupRecords(items)) ...[
+                        _GroupHeader(group),
+                        for (final record in group.records) ...[
+                          _RecordTile(childId: childId, record: record),
+                          const Divider(height: 1),
+                        ],
+                      ],
+                    ],
+                  ),
+          ),
     );
   }
 }

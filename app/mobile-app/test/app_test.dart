@@ -187,7 +187,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(label(now)), findsOneWidget);
 
-    // ゆっくりしたドラッグでは移動しない
+    // 半分までめくらずにゆっくり離すと、元の日に戻る
     await tester.timedDrag(
       list,
       const Offset(300, 0),
@@ -195,6 +195,75 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text(label(now)), findsOneWidget);
+
+    // めくっている途中は、前の日のページが隣に見えている（ViewPager と同じ動き）
+    final gesture = await tester.startGesture(tester.getCenter(list));
+    // 最初の移動はドラッグの開始判定（タッチの遊び）に使われるので、2 回に分けて動かす
+    await gesture.moveBy(const Offset(20, 0));
+    await gesture.moveBy(const Offset(200, 0));
+    await tester.pump();
+    expect(find.byType(RefreshIndicator), findsNWidgets(2));
+    // ゆっくり戻して離すと、日付は変わらない
+    await gesture.moveBy(const Offset(-200, 0));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.text(label(now)), findsOneWidget);
+
+    // 前の日へめくってから＋で追加すると、その日の記録として入力画面が開く
+    await tester.fling(list, const Offset(300, 0), 1000);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('記録を追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'ミルク'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining(label(yesterday)), findsOneWidget);
+  });
+
+  testWidgets('arrow buttons page to the previous and next day', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: [
+          Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    String label(DateTime d) => DateFormat('M月d日(E)', 'ja').format(d);
+    final now = today();
+    IconButton button(String tooltip) => tester.widget<IconButton>(
+      find.ancestor(
+        of: find.byTooltip(tooltip),
+        matching: find.byType(IconButton),
+      ),
+    );
+    // 今日より先には進めない
+    expect(button('次の日').onPressed, isNull);
+
+    await tester.tap(find.byTooltip('前の日'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(label(DateTime(now.year, now.month, now.day - 1))),
+      findsOneWidget,
+    );
+    expect(button('次の日').onPressed, isNotNull);
+
+    await tester.tap(find.byTooltip('次の日'));
+    await tester.pumpAndSettle();
+    expect(find.text(label(now)), findsOneWidget);
+    expect(button('次の日').onPressed, isNull);
+
+    // 素早く 2 回押すと 2 日前まで進む
+    await tester.tap(find.byTooltip('前の日'));
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.byTooltip('前の日'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(label(DateTime(now.year, now.month, now.day - 2))),
+      findsOneWidget,
+    );
   });
 
   testWidgets('weight form overwrites the day\'s recorded weight', (
