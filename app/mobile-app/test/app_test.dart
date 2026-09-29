@@ -6,6 +6,7 @@ import 'package:cradle/features/children/children_providers.dart';
 import 'package:cradle/features/records/growth_record.dart';
 import 'package:cradle/features/records/records_providers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -25,6 +26,8 @@ Widget _app(Session session, {List<Child> children = const []}) =>
       overrides: [
         sessionProvider.overrideWithValue(session),
         childrenProvider.overrideWith((ref) async => children),
+        weightSeriesProvider.overrideWith((ref, childId) async => const []),
+        milkDailyProvider.overrideWith((ref, childId) async => const []),
         dayRecordsProvider.overrideWith(
           (ref, arg) async => [
             GrowthRecord(
@@ -89,6 +92,82 @@ void main() {
     await tester.tap(find.text('はなこ').last);
     await tester.pumpAndSettle();
     expect(find.text('はなこ'), findsOneWidget);
+  });
+
+  testWidgets('keeps the selected tab in the URL without adding history', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    // ブラウザへの URL の通知を記録する（replace: true なら履歴に積まない）
+    final reported = <Map<Object?, Object?>>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.navigation,
+      (call) async {
+        if (call.method == 'routeInformationUpdated') {
+          reported.add(call.arguments as Map<Object?, Object?>);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.navigation,
+        null,
+      ),
+    );
+    await tester.pumpWidget(
+      _app(await _session(loggedIn: true), children: children),
+    );
+    await tester.pumpAndSettle();
+    int selected() =>
+        tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex;
+    expect(selected(), 0);
+
+    reported.clear();
+    await tester.tap(find.text('グラフ'));
+    await tester.pumpAndSettle();
+    expect(selected(), 1);
+    expect(find.byTooltip('記録を追加'), findsNothing);
+    expect(reported, isNotEmpty);
+    expect(reported.last['uri'], '/?tab=charts');
+    expect(reported.last['replace'], isTrue);
+  });
+
+  testWidgets('opens the tab in the URL on a fresh start (reload)', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    // 再読み込み = その URL からアプリを新しく起動する
+    tester.binding.platformDispatcher.defaultRouteNameTestValue =
+        '/?tab=charts';
+    addTearDown(
+      tester.binding.platformDispatcher.clearDefaultRouteNameTestValue,
+    );
+    await tester.pumpWidget(
+      _app(await _session(loggedIn: true), children: children),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      1,
+    );
+
+    // 不明な値は記録タブ
+    await tester.pumpWidget(const SizedBox());
+    tester.binding.platformDispatcher.defaultRouteNameTestValue =
+        '/?tab=unknown';
+    await tester.pumpWidget(
+      _app(await _session(loggedIn: true), children: children),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).selectedIndex,
+      0,
+    );
   });
 
   testWidgets('logging out returns to the login screen', (tester) async {

@@ -12,15 +12,34 @@ import '../records/growth_record.dart';
 import '../records/records_providers.dart';
 import '../records/records_tab.dart';
 
+/// ホームのタブ。URL のクエリ（?tab=）の値として使う
+enum HomeTab {
+  records('記録', Icons.list_alt_outlined),
+  charts('グラフ', Icons.show_chart),
+  ai('AIによる分析', Icons.auto_awesome_outlined);
+
+  const HomeTab(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+
+  /// 不明な値・未指定は「記録」
+  static HomeTab fromQuery(String? value) =>
+      values.firstWhere((t) => t.name == value, orElse: () => records);
+
+  String get location => this == records ? '/' : '/?tab=$name';
+}
+
 class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.tab = HomeTab.records});
+
+  final HomeTab tab;
 
   @override
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
-  int _tab = 0;
   late final AppLifecycleListener _lifecycle;
   DateTime? _hiddenAt;
 
@@ -134,14 +153,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         data: (child) => child == null
             ? _NoChildren(onAdd: () => context.push('/children/new'))
             // 表示中のタブだけを作り、グラフ・AI の分析は開いたときに取得する
-            : switch (_tab) {
-                0 => RecordsTab(childId: child.id),
-                1 => ChartsTab(childId: child.id),
+            : switch (widget.tab) {
+                HomeTab.records => RecordsTab(childId: child.id),
+                HomeTab.charts => ChartsTab(childId: child.id),
                 // こどもを切り替えたら生成中の表示・エラーを持ち越さない
-                _ => AiTab(key: ValueKey(child.id), childId: child.id),
+                HomeTab.ai => AiTab(key: ValueKey(child.id), childId: child.id),
               },
       ),
-      floatingActionButton: child == null || _tab != 0
+      floatingActionButton: child == null || widget.tab != HomeTab.records
           ? null
           : FloatingActionButton(
               tooltip: '記録を追加',
@@ -151,21 +170,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       bottomNavigationBar: child == null
           ? null
           : NavigationBar(
-              selectedIndex: _tab,
-              onDestinationSelected: (i) => setState(() => _tab = i),
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.list_alt_outlined),
-                  label: '記録',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.show_chart),
-                  label: 'グラフ',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  label: 'AIによる分析',
-                ),
+              selectedIndex: widget.tab.index,
+              // タブの切り替えはブラウザの履歴に積まない（「戻る」で前の画面に戻れるように）
+              onDestinationSelected: (i) => Router.neglect(
+                context,
+                () => context.go(HomeTab.values[i].location),
+              ),
+              // 並びは HomeTab の宣言順（selectedIndex と HomeTab.values[i] の対応をずらさない）
+              destinations: [
+                for (final t in HomeTab.values)
+                  NavigationDestination(icon: Icon(t.icon), label: t.label),
               ],
             ),
     );

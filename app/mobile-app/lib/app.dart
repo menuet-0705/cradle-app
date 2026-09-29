@@ -25,6 +25,8 @@ final routerProvider = Provider<GoRouter>((ref) {
     refreshListenable: session,
     redirect: (context, state) {
       final isPublic = _publicPaths.contains(state.matchedLocation);
+      // ログイン画面へは元の URL（?tab= など）を持っていかない。ログイン後は記録タブから始まる
+      // （戻り先を渡さないのでオープンリダイレクトの心配もない）
       if (!session.isLoggedIn) return isPublic ? null : '/login';
       if (isPublic) {
         // 招待リンクから来ていれば、ログイン・登録の後に招待の確認画面へ戻す
@@ -33,7 +35,13 @@ final routerProvider = Provider<GoRouter>((ref) {
       return null;
     },
     routes: [
-      GoRoute(path: '/', builder: (_, _) => const HomeScreen()),
+      // 表示中のタブは URL（/?tab=charts など）に持たせ、Web で再読み込みしても維持する
+      GoRoute(
+        path: '/',
+        builder: (_, state) => HomeScreen(
+          tab: HomeTab.fromQuery(state.uri.queryParameters['tab']),
+        ),
+      ),
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/signup', builder: (_, _) => const SignupScreen()),
       GoRoute(path: '/family', builder: (_, _) => const FamilyScreen()),
