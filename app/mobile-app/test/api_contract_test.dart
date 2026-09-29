@@ -67,6 +67,11 @@ void main() {
       child.id,
       NewRecord(type: RecordType.weight, startedAt: now, weightG: 5250),
     );
+    // 同じ日の 2 回目の体重は上書きされる
+    await records.create(
+      child.id,
+      NewRecord(type: RecordType.weight, startedAt: now, weightG: 5300),
+    );
 
     final day = await records.listForDay(child.id, now);
     expect(day.map((r) => r.type).toSet(), {
@@ -78,7 +83,7 @@ void main() {
 
     final milk = await records.milkDaily(child.id, from: now, to: now);
     expect(milk.single.totalMl, 120);
-    expect((await records.weightSeries(child.id)).single.weightG, 5250);
+    expect((await records.weightSeries(child.id)).single.weightG, 5300);
 
     // AI による分析（ローカルでは AI 未設定のこともあるので、生成はせず読み取りと設定だけ確認する）
     final ai = AiRepository(dio);

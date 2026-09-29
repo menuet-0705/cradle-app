@@ -6,6 +6,9 @@ import '../../core/api_client.dart';
 import 'growth_record.dart';
 import 'records_providers.dart';
 
+/// 日付を移動するスワイプとみなす横方向の速さ（px/秒）。ゆっくりしたドラッグでは移動しない
+const _swipeVelocity = 300.0;
+
 /// 選択中の日の記録一覧
 class RecordsTab extends ConsumerWidget {
   const RecordsTab({super.key, required this.childId});
@@ -16,6 +19,10 @@ class RecordsTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final day = ref.watch(selectedDayProvider) ?? today();
     final records = ref.watch(dayRecordsProvider((childId: childId, day: day)));
+    final selectedDay = ref.read(selectedDayProvider.notifier);
+    void previousDay() => selectedDay.shift(-1);
+    // 今日より先には進めない
+    final nextDay = day.isBefore(today()) ? () => selectedDay.shift(1) : null;
 
     return Column(
       children: [
@@ -26,8 +33,7 @@ class RecordsTab extends ConsumerWidget {
               IconButton(
                 tooltip: '前の日',
                 icon: const Icon(Icons.chevron_left),
-                onPressed: () =>
-                    ref.read(selectedDayProvider.notifier).shift(-1),
+                onPressed: previousDay,
               ),
               Expanded(
                 child: Text(
@@ -39,30 +45,38 @@ class RecordsTab extends ConsumerWidget {
               IconButton(
                 tooltip: '次の日',
                 icon: const Icon(Icons.chevron_right),
-                onPressed: day.isBefore(today())
-                    ? () => ref.read(selectedDayProvider.notifier).shift(1)
-                    : null,
+                onPressed: nextDay,
               ),
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: () => ref.refresh(
-              dayRecordsProvider((childId: childId, day: day)).future,
-            ),
-            child: records.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => _Message(errorMessage(e)),
-              data: (items) => items.isEmpty
-                  ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
-                  : ListView.separated(
-                      padding: const EdgeInsets.only(bottom: 96),
-                      itemCount: items.length,
-                      separatorBuilder: (_, _) => const Divider(height: 1),
-                      itemBuilder: (_, i) => _RecordTile(record: items[i]),
-                    ),
+          // 右スワイプで前の日、左スワイプで次の日（一覧の縦スクロールとは取り合わない）
+          child: GestureDetector(
+            // 読み込み中など、一覧が画面を埋めていないときもスワイプを受け付ける
+            behavior: HitTestBehavior.opaque,
+            onHorizontalDragEnd: (details) {
+              final v = details.primaryVelocity ?? 0;
+              if (v > _swipeVelocity) previousDay();
+              if (v < -_swipeVelocity) nextDay?.call();
+            },
+            child: RefreshIndicator(
+              onRefresh: () => ref.refresh(
+                dayRecordsProvider((childId: childId, day: day)).future,
+              ),
+              child: records.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (e, _) => _Message(errorMessage(e)),
+                data: (items) => items.isEmpty
+                    ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
+                    : ListView.separated(
+                        padding: const EdgeInsets.only(bottom: 96),
+                        itemCount: items.length,
+                        separatorBuilder: (_, _) => const Divider(height: 1),
+                        itemBuilder: (_, i) => _RecordTile(record: items[i]),
+                      ),
+              ),
             ),
           ),
         ),

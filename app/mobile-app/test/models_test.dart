@@ -1,5 +1,6 @@
 import 'package:cradle/features/children/child.dart';
 import 'package:cradle/features/records/growth_record.dart';
+import 'package:cradle/features/records/records_providers.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -46,6 +47,20 @@ void main() {
   });
 
   group('NewRecord', () {
+    test('sends the time zone only when given (weight)', () {
+      final json = NewRecord(
+        type: RecordType.weight,
+        startedAt: DateTime.utc(2026, 9, 28, 1),
+        weightG: 5250,
+      ).toJson(tz: 'Asia/Tokyo');
+      expect(json, {
+        'type': 'WEIGHT',
+        'startedAt': '2026-09-28T01:00:00.000Z',
+        'weightG': 5250,
+        'tz': 'Asia/Tokyo',
+      });
+    });
+
     test('sends UTC timestamps and only relevant fields', () {
       final json = NewRecord(
         type: RecordType.milk,
@@ -59,5 +74,19 @@ void main() {
         'amountMl': 100,
       });
     });
+  });
+
+  test('device time zone falls back to an IANA name', () {
+    const jst = Duration(hours: 9);
+    expect(ianaTimeZoneOr('Asia/Tokyo', jst), 'Asia/Tokyo');
+    expect(ianaTimeZoneOr('UTC', Duration.zero), 'UTC');
+    expect(ianaTimeZoneOr('GMT+09:00', jst), 'Etc/GMT-9');
+    expect(ianaTimeZoneOr('GMT-05:00', const Duration(hours: -5)), 'Etc/GMT+5');
+    expect(ianaTimeZoneOr('GMT', Duration.zero), 'UTC');
+    // 時間単位でない時差は Etc で表せない
+    expect(
+      ianaTimeZoneOr('GMT+05:30', const Duration(hours: 5, minutes: 30)),
+      'UTC',
+    );
   });
 }

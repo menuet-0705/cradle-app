@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:intl/intl.dart';
 
 Future<Session> _session({bool loggedIn = false}) async {
   FlutterSecureStorage.setMockInitialValues(
@@ -21,27 +22,38 @@ Future<Session> _session({bool loggedIn = false}) async {
   return session;
 }
 
-Widget _app(Session session, {List<Child> children = const []}) =>
-    ProviderScope(
-      overrides: [
-        sessionProvider.overrideWithValue(session),
-        childrenProvider.overrideWith((ref) async => children),
-        weightSeriesProvider.overrideWith((ref, childId) async => const []),
-        milkDailyProvider.overrideWith((ref, childId) async => const []),
-        dayRecordsProvider.overrideWith(
-          (ref, arg) async => [
-            GrowthRecord(
-              id: 'r1',
-              type: RecordType.milk,
-              startedAt: arg.day.add(const Duration(hours: 9)),
-              amountMl: 120,
-            ),
-          ],
+Widget _app(
+  Session session, {
+  List<Child> children = const [],
+  bool withWeight = false,
+}) => ProviderScope(
+  overrides: [
+    sessionProvider.overrideWithValue(session),
+    childrenProvider.overrideWith((ref) async => children),
+    weightSeriesProvider.overrideWith((ref, childId) async => const []),
+    milkDailyProvider.overrideWith((ref, childId) async => const []),
+    dayRecordsProvider.overrideWith(
+      (ref, arg) async => [
+        GrowthRecord(
+          id: 'r1',
+          type: RecordType.milk,
+          startedAt: arg.day.add(const Duration(hours: 9)),
+          amountMl: 120,
         ),
+        if (withWeight)
+          GrowthRecord(
+            id: 'w1',
+            type: RecordType.weight,
+            startedAt: arg.day.add(const Duration(hours: 8)),
+            weightG: 5250,
+            note: '朝',
+          ),
       ],
-      retry: (_, _) => null,
-      child: const CradleApp(),
-    );
+    ),
+  ],
+  retry: (_, _) => null,
+  child: const CradleApp(),
+);
 
 void main() {
   setUpAll(() => initializeDateFormatting('ja'));
@@ -92,6 +104,70 @@ void main() {
     await tester.tap(find.text('はなこ').last);
     await tester.pumpAndSettle();
     expect(find.text('はなこ'), findsOneWidget);
+  });
+
+  testWidgets('swipes right for the previous day and left for the next', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(await _session(loggedIn: true), children: children),
+    );
+    await tester.pumpAndSettle();
+    String label(DateTime d) => DateFormat('M月d日(E)', 'ja').format(d);
+    final now = today();
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final list = find.byType(RefreshIndicator);
+
+    await tester.fling(list, const Offset(300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text(label(yesterday)), findsOneWidget);
+
+    await tester.fling(list, const Offset(-300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text(label(now)), findsOneWidget);
+
+    // 今日より先には進まない
+    await tester.fling(list, const Offset(-300, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.text(label(now)), findsOneWidget);
+
+    // ゆっくりしたドラッグでは移動しない
+    await tester.timedDrag(
+      list,
+      const Offset(300, 0),
+      const Duration(seconds: 3),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(label(now)), findsOneWidget);
+  });
+
+  testWidgets('weight form overwrites the day\'s recorded weight', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: children,
+        withWeight: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('記録を追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '体重'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('体重を更新'), findsOneWidget);
+    expect(find.text('この日の体重は記録済みです。保存すると上書きされます'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '更新する'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '5.25'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '朝'), findsOneWidget);
   });
 
   testWidgets('keeps the selected tab in the URL without adding history', (

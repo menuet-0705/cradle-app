@@ -10,6 +10,24 @@ const note = z.string().trim().max(500);
 
 const HOUR_MS = 60 * 60 * 1000;
 
+// IANA 名（Asia/Tokyo 等）と UTC のみ受け付ける。
+// "+09:00" のようなオフセット表記は Postgres では符号が逆に解釈されるため拒否する
+function isValidTimeZone(tz: string): boolean {
+  if (!/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(tz)) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// 「1日」の区切りは利用者の地域で決まるので、端末のタイムゾーンを受け取る
+const timeZone = z
+  .string()
+  .max(64)
+  .refine(isValidTimeZone, 'Invalid time zone');
+
 // 種類ごとに必須項目が違うので、type で判別して検証する
 export const createRecordSchema = z.discriminatedUnion('type', [
   z.object({
@@ -37,6 +55,8 @@ export const createRecordSchema = z.discriminatedUnion('type', [
     type: z.literal('WEIGHT'),
     startedAt: pastDatetime,
     weightG: z.number().int().min(300).max(50_000),
+    // 体重は 1 日 1 件（同じ日の 2 回目は上書き）。その「1日」を決めるタイムゾーン
+    tz: timeZone,
     note: note.optional(),
   }),
   z.object({
@@ -61,24 +81,11 @@ export const listRecordsSchema = z
   });
 export type ListRecordsDto = z.infer<typeof listRecordsSchema>;
 
-// IANA 名（Asia/Tokyo 等）と UTC のみ受け付ける。
-// "+09:00" のようなオフセット表記は Postgres では符号が逆に解釈されるため拒否する
-function isValidTimeZone(tz: string): boolean {
-  if (!/^[A-Za-z][A-Za-z0-9_+-]*(\/[A-Za-z0-9_+-]+)*$/.test(tz)) return false;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export const milkDailySchema = z
   .object({
     from: z.iso.date(),
     to: z.iso.date(),
-    // 「1日」の区切りは利用者の地域で決まるので、端末のタイムゾーンを受け取る
-    tz: z.string().max(64).refine(isValidTimeZone, 'Invalid time zone'),
+    tz: timeZone,
   })
   .refine((v) => v.to >= v.from, { message: 'to must be on or after from' })
   .refine(

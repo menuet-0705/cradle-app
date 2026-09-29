@@ -33,6 +33,9 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   late DateTime _startedAt;
   late DateTime _endedAt;
   bool _saving = false;
+  // 体重: 表示中の日の記録済みの値を入力欄に反映する購読と、利用者が入力欄を触ったか
+  ProviderSubscription<AsyncValue<List<GrowthRecord>>>? _dayWeight;
+  bool _edited = false;
 
   @override
   void initState() {
@@ -45,7 +48,37 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
     if (widget.type == RecordType.sleep) {
       _startedAt = _startedAt.subtract(const Duration(hours: 1));
     }
+    if (widget.type == RecordType.weight) _followDayWeight();
   }
+
+  /// 体重は 1 日 1 件。選んでいる日の体重が記録済みなら値とメモを入れ、なければ空にする
+  /// （保存すると上書き）。日付を変えたら呼び直す。利用者が入力した内容は消さない
+  void _followDayWeight() {
+    _dayWeight?.close();
+    // 読み込みが終わるまで、前の日の値を新しい日の値として保存させない
+    if (!_edited) {
+      _weightKg.clear();
+      _note.clear();
+    }
+    _dayWeight = ref.listenManual(_dayRecords(_startedAt), (_, next) {
+      if (!next.hasValue || _edited) return;
+      final existing = _weightOf(next.value);
+      _weightKg.text = existing == null
+          ? ''
+          : (existing.weightG! / 1000).toString();
+      _note.text = existing?.note ?? '';
+    }, fireImmediately: true);
+  }
+
+  FutureProvider<List<GrowthRecord>> _dayRecords(DateTime at) =>
+      dayRecordsProvider((
+        childId: widget.childId,
+        day: DateUtils.dateOnly(at),
+      ));
+
+  /// その日の体重（一覧は新しい順なので、サーバーが上書きする 1 件と同じ）
+  static GrowthRecord? _weightOf(List<GrowthRecord>? records) =>
+      records?.where((r) => r.type == RecordType.weight).firstOrNull;
 
   @override
   void dispose() {
@@ -121,19 +154,41 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   Widget build(BuildContext context) {
     final type = widget.type;
     final isSleep = type == RecordType.sleep;
+    // 選んでいる日に体重が記録済みなら、保存は上書きになる
+    final overwrites =
+        type == RecordType.weight &&
+        _weightOf(ref.watch(_dayRecords(_startedAt)).value) != null;
     return Scaffold(
-      appBar: AppBar(title: Text('${type.label}を記録')),
+      appBar: AppBar(title: Text('${type.label}を${overwrites ? '更新' : '記録'}')),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
+            if (overwrites)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('この日の${type.label}は記録済みです。保存すると上書きされます'),
+                    ),
+                  ],
+                ),
+              ),
             _DateTimeField(
               label: isSleep ? '寝た時刻' : '日時',
               value: _startedAt,
               onTap: () async {
                 final v = await _pickDateTime(_startedAt);
-                if (v != null) setState(() => _startedAt = v);
+                if (v == null) return;
+                final dayChanged = !DateUtils.isSameDay(v, _startedAt);
+                setState(() => _startedAt = v);
+                if (dayChanged && type == RecordType.weight) {
+                  _followDayWeight();
+                }
               },
             ),
             if (isSleep) ...[
@@ -168,6 +223,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
             if (type == RecordType.weight)
               TextFormField(
                 controller: _weightKg,
+                onChanged: (_) => _edited = true,
                 decoration: const InputDecoration(
                   labelText: '体重',
                   suffixText: 'kg',
@@ -189,6 +245,8 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
               ),
             TextFormField(
               controller: _note,
+              // 体重の初期値の反映（_followDayWeight）で、入力した内容を消さないため
+              onChanged: (_) => _edited = true,
               decoration: InputDecoration(
                 labelText: type == RecordType.meal ? '食べたもの' : 'メモ（任意）',
                 hintText: type == RecordType.meal ? '例: おかゆ、にんじん' : null,
@@ -203,7 +261,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
             const SizedBox(height: 24),
             FilledButton(
               onPressed: _saving ? null : _save,
-              child: const Text('保存する'),
+              child: Text(overwrites ? '更新する' : '保存する'),
             ),
           ],
         ),

@@ -259,11 +259,13 @@ describe('cradle API (e2e)', () => {
       await post({
         type: 'WEIGHT',
         startedAt: '2026-08-01T10:00:00+09:00',
+        tz: 'Asia/Tokyo',
         weightG: 5200,
       }).expect(201);
       await post({
         type: 'WEIGHT',
         startedAt: '2026-08-28T10:00:00+09:00',
+        tz: 'Asia/Tokyo',
         weightG: 5800,
       }).expect(201);
       await post({
@@ -334,6 +336,128 @@ describe('cradle API (e2e)', () => {
       ).toEqual([5200, 5800]);
     });
 
+    it('keeps one weight per day and overwrites the second one', async () => {
+      const { accessToken } = await signup();
+      const h = auth(accessToken);
+      const child = await api()
+        .post('/api/v1/children')
+        .set(h)
+        .send({ name: 'じろう', birthDate: '2025-04-01' })
+        .expect(201);
+      const childId = (child.body as { id: string }).id;
+      const post = (body: object) =>
+        api().post(`/api/v1/children/${childId}/records`).set(h).send(body);
+      const weights = async () => {
+        const res = await api()
+          .get(`/api/v1/children/${childId}/stats/weight`)
+          .set(h)
+          .expect(200);
+        return res.body as { startedAt: string; weightG: number }[];
+      };
+
+      const first = await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T08:00:00+09:00',
+        weightG: 5800,
+        tz: 'Asia/Tokyo',
+        note: '朝',
+      }).expect(201);
+      // 同じ日（JST）の 2 回目は同じ記録を上書きする
+      const second = await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T23:00:00+09:00',
+        weightG: 5850,
+        tz: 'Asia/Tokyo',
+      }).expect(201);
+      expect((second.body as { id: string }).id).toBe(
+        (first.body as { id: string }).id,
+      );
+      expect(second.body).toMatchObject({
+        weightG: 5850,
+        note: null,
+        startedAt: '2026-08-28T14:00:00.000Z',
+      });
+      expect(await weights()).toEqual([
+        { startedAt: '2026-08-28T14:00:00.000Z', weightG: 5850 },
+      ]);
+
+      // JST の翌日 00:30 は別の日なので新規（UTC では同じ 8/28）
+      await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-29T00:30:00+09:00',
+        weightG: 5900,
+        tz: 'Asia/Tokyo',
+      }).expect(201);
+      expect((await weights()).map((w) => w.weightG)).toEqual([5850, 5900]);
+
+      // UTC で区切ると上の 2 件はどちらも 8/28。複数あるときは最も新しい方（5900）を上書きする
+      await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T20:00:00Z',
+        weightG: 5950,
+        tz: 'UTC',
+      }).expect(201);
+      expect((await weights()).map((w) => w.weightG)).toEqual([5850, 5950]);
+
+      // 夏時間の終わる日（1 日が 25 時間）の 00:10 と 23:50 も同じ日として上書きする
+      for (const [startedAt, weightG] of [
+        ['2025-11-02T00:10:00-04:00', 7000],
+        ['2025-11-02T23:50:00-05:00', 7010],
+      ] as const) {
+        await post({
+          type: 'WEIGHT',
+          startedAt,
+          weightG,
+          tz: 'America/New_York',
+        }).expect(201);
+      }
+      expect((await weights()).map((w) => w.weightG)).toEqual([
+        7010, 5850, 5950,
+      ]);
+
+      // 同時に保存しても 1 日 1 件のまま
+      await Promise.all(
+        [6000, 6010, 6020].map((weightG) =>
+          post({
+            type: 'WEIGHT',
+            startedAt: '2026-08-30T10:00:00+09:00',
+            weightG,
+            tz: 'Asia/Tokyo',
+          }).expect(201),
+        ),
+      );
+      expect(await weights()).toHaveLength(4);
+
+      // タイムゾーンは必須・IANA 名のみ
+      for (const tz of [undefined, '+09:00', "UTC'; --", 'Mars/Olympus']) {
+        await post({
+          type: 'WEIGHT',
+          startedAt: '2026-08-31T10:00:00+09:00',
+          weightG: 6100,
+          tz,
+        }).expect(400);
+      }
+
+      // 体重以外は同じ日に何件でも記録できる
+      for (const amountMl of [100, 120]) {
+        await post({
+          type: 'MILK',
+          startedAt: '2026-08-28T09:00:00+09:00',
+          amountMl,
+        }).expect(201);
+      }
+      const milk = await api()
+        .get(`/api/v1/children/${childId}/records`)
+        .query({
+          from: '2026-08-28T00:00:00+09:00',
+          to: '2026-08-29T00:00:00+09:00',
+          type: 'MILK',
+        })
+        .set(h)
+        .expect(200);
+      expect(milk.body).toHaveLength(2);
+    });
+
     it("does not expose another family's children or records", async () => {
       const owner = await signup('A');
       const other = await signup('B');
@@ -350,6 +474,7 @@ describe('cradle API (e2e)', () => {
         .send({
           type: 'WEIGHT',
           startedAt: '2026-08-28T10:00:00Z',
+          tz: 'UTC',
           weightG: 7000,
         })
         .expect(201);

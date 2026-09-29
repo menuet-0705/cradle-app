@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -42,8 +43,14 @@ class RecordsRepository {
         .toList();
   }
 
-  Future<void> create(String childId, NewRecord record) =>
-      _dio.post<void>('/children/$childId/records', data: record.toJson());
+  Future<void> create(String childId, NewRecord record) async {
+    // 体重は 1 日 1 件（同じ日の 2 回目は上書き）。その「1日」を端末のタイムゾーンで区切る
+    final tz = record.type == RecordType.weight ? await deviceTimeZone() : null;
+    await _dio.post<void>(
+      '/children/$childId/records',
+      data: record.toJson(tz: tz),
+    );
+  }
 
   Future<void> delete(String recordId) =>
       _dio.delete<void>('/records/$recordId');
@@ -65,13 +72,13 @@ class RecordsRepository {
     required DateTime from,
     required DateTime to,
   }) async {
-    final tz = await FlutterTimezone.getLocalTimezone();
+    final tz = await deviceTimeZone();
     final res = await _dio.get<List<dynamic>>(
       '/children/$childId/stats/milk-daily',
       queryParameters: {
         'from': _date.format(from),
         'to': _date.format(to),
-        'tz': tz.identifier,
+        'tz': tz,
       },
     );
     return res.data!.cast<Map<String, dynamic>>().map((e) {
@@ -82,6 +89,29 @@ class RecordsRepository {
       );
     }).toList();
   }
+}
+
+// API が受け付けるタイムゾーン名（IANA 名。サーバーの検証と同じ形）
+final _ianaName = RegExp(r'^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$');
+
+/// 端末のタイムゾーン（IANA 名）。
+/// 一部の端末は `GMT+09:00` のような名前を返すので、`Area/City` 形式と `UTC` 以外は
+/// 現在の時差から `Etc/GMT-9`（IANA の Etc は符号が逆）を作る。
+/// 時差が時間単位でなければ（例: +05:30）表せないので UTC にする（日の区切りがずれるのは許容）
+Future<String> deviceTimeZone() async {
+  final name = (await FlutterTimezone.getLocalTimezone()).identifier;
+  return ianaTimeZoneOr(name, DateTime.now().timeZoneOffset);
+}
+
+@visibleForTesting
+String ianaTimeZoneOr(String name, Duration offset) {
+  if (_ianaName.hasMatch(name) && (name.contains('/') || name == 'UTC')) {
+    return name;
+  }
+  if (offset.inMinutes % 60 != 0) return 'UTC';
+  final hours = offset.inHours;
+  if (hours == 0) return 'UTC';
+  return 'Etc/GMT${hours > 0 ? '-' : '+'}${hours.abs()}';
 }
 
 final recordsRepositoryProvider = Provider<RecordsRepository>(

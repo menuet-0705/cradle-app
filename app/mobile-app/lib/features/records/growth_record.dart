@@ -84,13 +84,15 @@ class NewRecord {
   final int? weightG;
   final String? note;
 
-  Map<String, dynamic> toJson() => {
+  /// [tz] は体重のときに「1日」を区切る端末のタイムゾーン（IANA 名）
+  Map<String, dynamic> toJson({String? tz}) => {
     'type': type.apiValue,
     // タイムゾーン付きで送る（サーバーは UTC で保存）
     'startedAt': startedAt.toUtc().toIso8601String(),
     'endedAt': ?endedAt?.toUtc().toIso8601String(),
     'amountMl': ?amountMl,
     'weightG': ?weightG,
+    'tz': ?tz,
     if (note != null && note!.isNotEmpty) 'note': note,
   };
 }
