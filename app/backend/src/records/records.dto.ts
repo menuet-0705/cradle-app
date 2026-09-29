@@ -23,6 +23,7 @@ function isValidTimeZone(tz: string): boolean {
 }
 
 // 「1日」の区切りは利用者の地域で決まるので、端末のタイムゾーンを受け取る
+// （日別集計と、体重・食事の「1 日 1 件」の判定に使う）
 const timeZone = z
   .string()
   .max(64)
@@ -55,13 +56,22 @@ export const createRecordSchema = z.discriminatedUnion('type', [
     type: z.literal('WEIGHT'),
     startedAt: pastDatetime,
     weightG: z.number().int().min(300).max(50_000),
-    // 体重は 1 日 1 件（同じ日の 2 回目は上書き）。その「1日」を決めるタイムゾーン
+    // 体重は 1 日 1 件（同じ日の 2 回目は上書き）
     tz: timeZone,
     note: note.optional(),
   }),
   z.object({
     type: z.literal('MEAL'),
     startedAt: pastDatetime,
+    // 食事は 1 日に区分ごと 1 件（同じ日・同じ区分の 2 回目は上書き）
+    mealSlot: z.enum([
+      'BREAKFAST',
+      'MORNING_SNACK',
+      'LUNCH',
+      'AFTERNOON_SNACK',
+      'DINNER',
+    ]),
+    tz: timeZone,
     note: note.min(1),
   }),
 ]);

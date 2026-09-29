@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
 import 'growth_record.dart';
+import 'record_groups.dart';
 import 'records_providers.dart';
 
 /// 日付を移動するスワイプとみなす横方向の速さ（px/秒）。ゆっくりしたドラッグでは移動しない
@@ -70,17 +71,46 @@ class RecordsTab extends ConsumerWidget {
                 error: (e, _) => _Message(errorMessage(e)),
                 data: (items) => items.isEmpty
                     ? const _Message('この日の記録はまだありません\n右下の＋から追加できます')
-                    : ListView.separated(
+                    : ListView(
                         padding: const EdgeInsets.only(bottom: 96),
-                        itemCount: items.length,
-                        separatorBuilder: (_, _) => const Divider(height: 1),
-                        itemBuilder: (_, i) => _RecordTile(record: items[i]),
+                        children: [
+                          for (final group in groupRecords(items)) ...[
+                            _GroupHeader(group),
+                            for (final record in group.records) ...[
+                              _RecordTile(record: record),
+                              const Divider(height: 1),
+                            ],
+                          ],
+                        ],
                       ),
               ),
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 種類ごとのグループの見出し（件数・合計）
+class _GroupHeader extends StatelessWidget {
+  const _GroupHeader(this.group);
+
+  final RecordGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.surfaceContainerHighest,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Text(
+        group.header,
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
     );
   }
 }
@@ -128,7 +158,7 @@ class _RecordTile extends ConsumerWidget {
     final note = record.type == RecordType.meal ? null : record.note;
     return ListTile(
       leading: CircleAvatar(child: Icon(record.type.icon)),
-      title: Text('${record.type.label}  ${record.summary}'),
+      title: Text('${record.label}  ${record.summary}'),
       subtitle: Text(
         [timeLabel, ?note, ?record.createdByName].join('  ·  '),
         maxLines: 2,

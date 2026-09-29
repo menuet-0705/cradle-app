@@ -33,8 +33,10 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   late DateTime _startedAt;
   late DateTime _endedAt;
   bool _saving = false;
-  // 体重: 表示中の日の記録済みの値を入力欄に反映する購読と、利用者が入力欄を触ったか
-  ProviderSubscription<AsyncValue<List<GrowthRecord>>>? _dayWeight;
+  late MealSlot _mealSlot;
+  bool _slotChosen = false;
+  // 体重・食事: 選んでいる日の記録済みの内容を入力欄に反映する購読と、利用者が入力欄を触ったか
+  ProviderSubscription<AsyncValue<List<GrowthRecord>>>? _dayRecord;
   bool _edited = false;
 
   @override
@@ -48,24 +50,27 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
     if (widget.type == RecordType.sleep) {
       _startedAt = _startedAt.subtract(const Duration(hours: 1));
     }
-    if (widget.type == RecordType.weight) _followDayWeight();
+    _mealSlot = MealSlot.at(_startedAt);
+    if (widget.type.oncePerDay) _followDayRecord();
   }
 
-  /// 体重は 1 日 1 件。選んでいる日の体重が記録済みなら値とメモを入れ、なければ空にする
-  /// （保存すると上書き）。日付を変えたら呼び直す。利用者が入力した内容は消さない
-  void _followDayWeight() {
-    _dayWeight?.close();
+  /// 体重は 1 日 1 件、食事は区分ごとに 1 件。選んでいる日（・区分）が記録済みなら内容を入れ、
+  /// なければ空にする（保存すると上書き）。日付・区分を変えたら呼び直す。利用者が入力した内容は消さない
+  void _followDayRecord() {
+    _dayRecord?.close();
     // 読み込みが終わるまで、前の日の値を新しい日の値として保存させない
     if (!_edited) {
       _weightKg.clear();
       _note.clear();
     }
-    _dayWeight = ref.listenManual(_dayRecords(_startedAt), (_, next) {
+    _dayRecord = ref.listenManual(_dayRecords(_startedAt), (_, next) {
       if (!next.hasValue || _edited) return;
-      final existing = _weightOf(next.value);
-      _weightKg.text = existing == null
-          ? ''
-          : (existing.weightG! / 1000).toString();
+      final existing = _existingOf(next.value);
+      if (widget.type == RecordType.weight) {
+        _weightKg.text = existing == null
+            ? ''
+            : (existing.weightG! / 1000).toString();
+      }
       _note.text = existing?.note ?? '';
     }, fireImmediately: true);
   }
@@ -76,9 +81,14 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
         day: DateUtils.dateOnly(at),
       ));
 
-  /// その日の体重（一覧は新しい順なので、サーバーが上書きする 1 件と同じ）
-  static GrowthRecord? _weightOf(List<GrowthRecord>? records) =>
-      records?.where((r) => r.type == RecordType.weight).firstOrNull;
+  /// 保存すると上書きされる記録（一覧は新しい順なので、サーバーが上書きする 1 件と同じ）
+  GrowthRecord? _existingOf(List<GrowthRecord>? records) => records
+      ?.where(
+        (r) =>
+            r.type == widget.type &&
+            (r.type != RecordType.meal || r.mealSlot == _mealSlot),
+      )
+      .firstOrNull;
 
   @override
   void dispose() {
@@ -132,6 +142,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
               weightG: type == RecordType.weight
                   ? (double.parse(_weightKg.text) * 1000).round()
                   : null,
+              mealSlot: type == RecordType.meal ? _mealSlot : null,
               note: _note.text.trim(),
             ),
           );
@@ -154,10 +165,11 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
   Widget build(BuildContext context) {
     final type = widget.type;
     final isSleep = type == RecordType.sleep;
-    // 選んでいる日に体重が記録済みなら、保存は上書きになる
+    // 選んでいる日（食事は区分も）が記録済みなら、保存は上書きになる
     final overwrites =
-        type == RecordType.weight &&
-        _weightOf(ref.watch(_dayRecords(_startedAt)).value) != null;
+        type.oncePerDay &&
+        _existingOf(ref.watch(_dayRecords(_startedAt)).value) != null;
+    final target = type == RecordType.meal ? _mealSlot.label : type.label;
     return Scaffold(
       appBar: AppBar(title: Text('${type.label}を${overwrites ? '更新' : '記録'}')),
       body: Form(
@@ -172,9 +184,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                   children: [
                     const Icon(Icons.info_outline),
                     const SizedBox(width: 8),
-                    Expanded(
-                      child: Text('この日の${type.label}は記録済みです。保存すると上書きされます'),
-                    ),
+                    Expanded(child: Text('この日の$targetは記録済みです。保存すると上書きされます')),
                   ],
                 ),
               ),
@@ -185,12 +195,40 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
                 final v = await _pickDateTime(_startedAt);
                 if (v == null) return;
                 final dayChanged = !DateUtils.isSameDay(v, _startedAt);
-                setState(() => _startedAt = v);
-                if (dayChanged && type == RecordType.weight) {
-                  _followDayWeight();
+                // 食事は、区分を手で選ぶまでは時刻に合わせて区分も変える
+                final slot = type == RecordType.meal && !_slotChosen
+                    ? MealSlot.at(v)
+                    : _mealSlot;
+                final slotChanged = slot != _mealSlot;
+                setState(() {
+                  _startedAt = v;
+                  _mealSlot = slot;
+                });
+                if (type.oncePerDay && (dayChanged || slotChanged)) {
+                  _followDayRecord();
                 }
               },
             ),
+            if (type == RecordType.meal) ...[
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final slot in MealSlot.values)
+                    ChoiceChip(
+                      label: Text(slot.label),
+                      selected: slot == _mealSlot,
+                      onSelected: (_) {
+                        _slotChosen = true;
+                        if (slot == _mealSlot) return;
+                        setState(() => _mealSlot = slot);
+                        _followDayRecord();
+                      },
+                    ),
+                ],
+              ),
+            ],
             if (isSleep) ...[
               const SizedBox(height: 16),
               _DateTimeField(
@@ -245,7 +283,7 @@ class _RecordFormScreenState extends ConsumerState<RecordFormScreen> {
               ),
             TextFormField(
               controller: _note,
-              // 体重の初期値の反映（_followDayWeight）で、入力した内容を消さないため
+              // 記録済みの内容の反映（_followDayRecord）で、入力した内容を消さないため
               onChanged: (_) => _edited = true,
               decoration: InputDecoration(
                 labelText: type == RecordType.meal ? '食べたもの' : 'メモ（任意）',

@@ -15,6 +15,7 @@ const recordSelect = {
   endedAt: true,
   amountMl: true,
   weightG: true,
+  mealSlot: true,
   note: true,
   createdAt: true,
   createdBy: { select: { id: true, name: true } },
@@ -39,7 +40,7 @@ export class RecordsService {
         startedAt: { gte: q.from, lt: q.to },
       },
       select: recordSelect,
-      // 同じ時刻なら後から作った方を先に（体重の上書き対象と同じ順）
+      // 同じ時刻なら後から作った方を先に（体重・食事の上書き対象と同じ順）
       orderBy: [{ startedAt: 'desc' }, { createdAt: 'desc' }],
       take: 1000,
     });
@@ -47,8 +48,8 @@ export class RecordsService {
 
   async create(userId: string, childId: string, dto: CreateRecordDto) {
     await this.children.assertAccess(userId, childId);
-    if (dto.type === 'WEIGHT') {
-      return this.saveDailyWeight(userId, childId, dto);
+    if (dto.type === 'WEIGHT' || dto.type === 'MEAL') {
+      return this.saveOncePerDay(userId, childId, dto);
     }
     return this.prisma.record.create({
       data: {
@@ -65,23 +66,27 @@ export class RecordsService {
   }
 
   /**
-   * 体重は 1 日 1 件。同じ日（dto.tz で区切る）にすでにあれば、その記録を上書きする。
-   * 確認と作成を同時リクエストで追い越されないよう、こどもごとのロックを取って 1 件ずつ行う
+   * 体重は 1 日 1 件、食事は 1 日に区分ごと 1 件。同じ日（dto.tz で区切る）にすでにあれば、
+   * その記録を上書きする。確認と作成を同時リクエストで追い越されないよう、
+   * こどもごとのロックを取って 1 件ずつ行う
    */
-  private saveDailyWeight(
+  private saveOncePerDay(
     userId: string,
     childId: string,
-    dto: Extract<CreateRecordDto, { type: 'WEIGHT' }>,
+    dto: Extract<CreateRecordDto, { type: 'WEIGHT' | 'MEAL' }>,
   ) {
     const startedAt = dto.startedAt.toISOString();
+    const mealSlot = dto.type === 'MEAL' ? dto.mealSlot : null;
+    const schema = this.prisma.schema;
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('records:weight:' || ${childId}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('records:daily:' || ${childId}))`;
       // 過去に同じ日に複数登録されている場合は、最も新しい 1 件を更新する
       const [existing] = await tx.$queryRaw<{ id: string }[]>`
         SELECT id
-          FROM ${this.prisma.schema}.records
+          FROM ${schema}.records
          WHERE child_id = ${childId}::uuid
-           AND type = 'WEIGHT'
+           AND type = CAST(${dto.type} AS ${schema}."RecordType")
+           AND meal_slot IS NOT DISTINCT FROM CAST(${mealSlot} AS ${schema}."MealSlot")
            -- インデックス (child_id, type, started_at) を使うための粗い範囲（夏時間で 1 日が 25 時間の日も含める）
            AND started_at >= ${startedAt}::timestamptz - interval '26 hours'
            AND started_at <  ${startedAt}::timestamptz + interval '26 hours'
@@ -91,7 +96,8 @@ export class RecordsService {
          LIMIT 1`;
       const data = {
         startedAt: dto.startedAt,
-        weightG: dto.weightG,
+        weightG: dto.type === 'WEIGHT' ? dto.weightG : null,
+        mealSlot,
         note: dto.note ?? null,
       };
       return existing
@@ -101,7 +107,7 @@ export class RecordsService {
             select: recordSelect,
           })
         : tx.record.create({
-            data: { ...data, childId, createdById: userId, type: 'WEIGHT' },
+            data: { ...data, childId, createdById: userId, type: dto.type },
             select: recordSelect,
           });
     }, TX_OPTIONS);

@@ -91,7 +91,13 @@ describe('AI features (e2e)', () => {
     api()
       .post(`/api/v1/children/${childId}/records`)
       .set(auth(token))
-      .send({ type: 'MEAL', startedAt: at.toISOString(), note })
+      .send({
+        type: 'MEAL',
+        startedAt: at.toISOString(),
+        mealSlot: 'LUNCH',
+        tz: 'Asia/Tokyo',
+        note,
+      })
       .expect(201);
   const suggest = (token: string, childId: string) =>
     api()

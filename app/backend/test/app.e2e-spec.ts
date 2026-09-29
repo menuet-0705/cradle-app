@@ -271,6 +271,8 @@ describe('cradle API (e2e)', () => {
       await post({
         type: 'MEAL',
         startedAt: '2026-08-28T12:00:00+09:00',
+        mealSlot: 'LUNCH',
+        tz: 'Asia/Tokyo',
         note: 'おかゆ',
       }).expect(201);
 
@@ -287,6 +289,8 @@ describe('cradle API (e2e)', () => {
       await post({
         type: 'MEAL',
         startedAt: '2026-08-28T12:00:00+09:00',
+        mealSlot: 'LUNCH',
+        tz: 'Asia/Tokyo',
       }).expect(400);
 
       const records = await api()
@@ -458,6 +462,104 @@ describe('cradle API (e2e)', () => {
       expect(milk.body).toHaveLength(2);
     });
 
+    it('keeps one meal per slot per day and overwrites the second one', async () => {
+      const { accessToken } = await signup();
+      const h = auth(accessToken);
+      const child = await api()
+        .post('/api/v1/children')
+        .set(h)
+        .send({ name: 'さぶろう', birthDate: '2025-04-01' })
+        .expect(201);
+      const childId = (child.body as { id: string }).id;
+      const post = (body: object) =>
+        api().post(`/api/v1/children/${childId}/records`).set(h).send(body);
+      const meals = async () => {
+        const res = await api()
+          .get(`/api/v1/children/${childId}/records`)
+          .query({
+            from: '2026-08-28T00:00:00+09:00',
+            to: '2026-08-29T00:00:00+09:00',
+            type: 'MEAL',
+          })
+          .set(h)
+          .expect(200);
+        return (res.body as { mealSlot: string; note: string }[])
+          .map((m) => `${m.mealSlot}:${m.note}`)
+          .sort();
+      };
+      const meal = (mealSlot: string, startedAt: string, note: string) =>
+        post({ type: 'MEAL', startedAt, mealSlot, tz: 'Asia/Tokyo', note });
+
+      const first = await meal(
+        'BREAKFAST',
+        '2026-08-28T07:00:00+09:00',
+        'パン',
+      ).expect(201);
+      expect(first.body).toMatchObject({ mealSlot: 'BREAKFAST', note: 'パン' });
+      await meal('MORNING_SNACK', '2026-08-28T10:00:00+09:00', 'バナナ').expect(
+        201,
+      );
+      await meal('LUNCH', '2026-08-28T12:00:00+09:00', 'うどん').expect(201);
+      await meal(
+        'AFTERNOON_SNACK',
+        '2026-08-28T15:00:00+09:00',
+        'ヨーグルト',
+      ).expect(201);
+      await meal('DINNER', '2026-08-28T18:00:00+09:00', 'おかゆ').expect(201);
+      // 同じ日・同じ区分の 2 回目は上書き（時刻は区分と関係なく選べる）
+      const second = await meal(
+        'BREAKFAST',
+        '2026-08-28T08:30:00+09:00',
+        'おにぎり',
+      ).expect(201);
+      expect((second.body as { id: string }).id).toBe(
+        (first.body as { id: string }).id,
+      );
+      expect(await meals()).toEqual([
+        'AFTERNOON_SNACK:ヨーグルト',
+        'BREAKFAST:おにぎり',
+        'DINNER:おかゆ',
+        'LUNCH:うどん',
+        'MORNING_SNACK:バナナ',
+      ]);
+      // 別の日の同じ区分は新規
+      await meal('BREAKFAST', '2026-08-29T07:00:00+09:00', 'パン').expect(201);
+      expect(await meals()).toHaveLength(5);
+      // 同じ日の体重は食事を上書きせず、別の記録になる
+      const weight = await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T07:00:00+09:00',
+        weightG: 7000,
+        tz: 'Asia/Tokyo',
+      }).expect(201);
+      expect((weight.body as { id: string }).id).not.toBe(
+        (first.body as { id: string }).id,
+      );
+      expect(await meals()).toHaveLength(5);
+
+      // 区分・タイムゾーンは必須。区分は決まった値だけ
+      for (const body of [
+        { mealSlot: undefined, tz: 'Asia/Tokyo' },
+        { mealSlot: 'SUPPER', tz: 'Asia/Tokyo' },
+        { mealSlot: 'LUNCH', tz: undefined },
+      ]) {
+        await post({
+          type: 'MEAL',
+          startedAt: '2026-08-28T12:00:00+09:00',
+          note: 'x',
+          ...body,
+        }).expect(400);
+      }
+      // 食事以外の記録に区分は付かない
+      const milk = await post({
+        type: 'MILK',
+        startedAt: '2026-08-28T09:00:00+09:00',
+        amountMl: 100,
+        mealSlot: 'LUNCH',
+      }).expect(201);
+      expect(milk.body).toMatchObject({ mealSlot: null });
+    });
+
     it("does not expose another family's children or records", async () => {
       const owner = await signup('A');
       const other = await signup('B');
@@ -492,7 +594,13 @@ describe('cradle API (e2e)', () => {
       await api()
         .post(`/api/v1/children/${childId}/records`)
         .set(h)
-        .send({ type: 'MEAL', startedAt: '2026-08-28T10:00:00Z', note: 'x' })
+        .send({
+          type: 'MEAL',
+          startedAt: '2026-08-28T10:00:00Z',
+          mealSlot: 'BREAKFAST',
+          tz: 'UTC',
+          note: 'x',
+        })
         .expect(404);
       await api()
         .patch(`/api/v1/children/${childId}`)

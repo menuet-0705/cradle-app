@@ -26,6 +26,7 @@ Widget _app(
   Session session, {
   List<Child> children = const [],
   bool withWeight = false,
+  bool withMeal = false,
 }) => ProviderScope(
   overrides: [
     sessionProvider.overrideWithValue(session),
@@ -47,6 +48,14 @@ Widget _app(
             startedAt: arg.day.add(const Duration(hours: 8)),
             weightG: 5250,
             note: '朝',
+          ),
+        if (withMeal)
+          GrowthRecord(
+            id: 'f1',
+            type: RecordType.meal,
+            startedAt: arg.day.add(const Duration(hours: 7)),
+            mealSlot: MealSlot.breakfast,
+            note: 'パン',
           ),
       ],
     ),
@@ -168,6 +177,70 @@ void main() {
     expect(find.widgetWithText(FilledButton, '更新する'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, '5.25'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, '朝'), findsOneWidget);
+  });
+
+  testWidgets('groups the day\'s records by type with a summary', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(
+        await _session(loggedIn: true),
+        children: children,
+        withWeight: true,
+        withMeal: true,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final headers = ['ミルク  1回 · 合計 120 ml', '体重', '食事  1回'];
+    for (final h in headers) {
+      expect(find.text(h), findsOneWidget);
+    }
+    // 見出しは種類の順（ミルク → 体重 → 食事）に並ぶ
+    final ys = [for (final h in headers) tester.getTopLeft(find.text(h)).dy];
+    expect(ys, [...ys]..sort());
+    // 食事は区分名で出す
+    expect(find.text('朝食  パン'), findsOneWidget);
+  });
+
+  testWidgets('meal form overwrites the recorded meal of the slot', (
+    tester,
+  ) async {
+    final children = [
+      Child(id: 'c1', name: 'たろう', birthDate: DateTime(2026, 4, 1)),
+    ];
+    await tester.pumpWidget(
+      _app(await _session(loggedIn: true), children: children, withMeal: true),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('記録を追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, '食事'));
+    await tester.pumpAndSettle();
+
+    // 記録済みの区分（朝食）を選ぶと、内容が入り上書きの案内が出る
+    await tester.tap(find.widgetWithText(ChoiceChip, '朝食'));
+    await tester.pumpAndSettle();
+    expect(find.text('この日の朝食は記録済みです。保存すると上書きされます'), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, '更新する'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'パン'), findsOneWidget);
+
+    // 記録のない区分に変えると、案内が消え入力欄は空になる
+    await tester.tap(find.widgetWithText(ChoiceChip, '夕食'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('記録済みです'), findsNothing);
+    expect(find.widgetWithText(FilledButton, '保存する'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, 'パン'), findsNothing);
+
+    // 手で入力した後は、区分を変えても入力を消さない
+    await tester.enterText(find.byType(TextFormField), 'うどん');
+    await tester.tap(find.widgetWithText(ChoiceChip, '朝食'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(TextFormField, 'うどん'), findsOneWidget);
+    expect(find.text('この日の朝食は記録済みです。保存すると上書きされます'), findsOneWidget);
   });
 
   testWidgets('keeps the selected tab in the URL without adding history', (

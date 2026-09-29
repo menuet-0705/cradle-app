@@ -44,8 +44,8 @@ class RecordsRepository {
   }
 
   Future<void> create(String childId, NewRecord record) async {
-    // 体重は 1 日 1 件（同じ日の 2 回目は上書き）。その「1日」を端末のタイムゾーンで区切る
-    final tz = record.type == RecordType.weight ? await deviceTimeZone() : null;
+    // 体重・食事は 1 日 1 件（同じ日の 2 回目は上書き）。その「1日」を端末のタイムゾーンで区切る
+    final tz = record.type.oncePerDay ? await deviceTimeZone() : null;
     await _dio.post<void>(
       '/children/$childId/records',
       data: record.toJson(tz: tz),

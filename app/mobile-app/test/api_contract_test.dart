@@ -72,11 +72,27 @@ void main() {
       child.id,
       NewRecord(type: RecordType.weight, startedAt: now, weightG: 5300),
     );
+    // 食事は同じ日・同じ区分の 2 回目が上書きされる
+    for (final note in ['パン', 'おにぎり']) {
+      await records.create(
+        child.id,
+        NewRecord(
+          type: RecordType.meal,
+          startedAt: now,
+          mealSlot: MealSlot.breakfast,
+          note: note,
+        ),
+      );
+    }
 
     final day = await records.listForDay(child.id, now);
+    final meals = day.where((r) => r.type == RecordType.meal);
+    expect(meals.single.mealSlot, MealSlot.breakfast);
+    expect(meals.single.note, 'おにぎり');
     expect(day.map((r) => r.type).toSet(), {
       RecordType.milk,
       RecordType.weight,
+      RecordType.meal,
       // 深夜0〜2時に実行すると睡眠は前日扱いになるため含めない
       if (now.hour >= 2) RecordType.sleep,
     });
