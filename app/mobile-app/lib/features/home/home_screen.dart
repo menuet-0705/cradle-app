@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/api_client.dart';
+import '../ai/ai_tab.dart';
 import '../auth/auth_repository.dart';
 import '../charts/charts_tab.dart';
 import '../children/child.dart';
@@ -132,10 +133,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         ),
         data: (child) => child == null
             ? _NoChildren(onAdd: () => context.push('/children/new'))
-            // 表示中のタブだけを作り、グラフは開いたときに取得する
-            : _tab == 0
-            ? RecordsTab(childId: child.id)
-            : ChartsTab(childId: child.id),
+            // 表示中のタブだけを作り、グラフ・AI の分析は開いたときに取得する
+            : switch (_tab) {
+                0 => RecordsTab(childId: child.id),
+                1 => ChartsTab(childId: child.id),
+                // こどもを切り替えたら生成中の表示・エラーを持ち越さない
+                _ => AiTab(key: ValueKey(child.id), childId: child.id),
+              },
       ),
       floatingActionButton: child == null || _tab != 0
           ? null
@@ -157,6 +161,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 NavigationDestination(
                   icon: Icon(Icons.show_chart),
                   label: 'グラフ',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  label: 'AIによる分析',
                 ),
               ],
             ),

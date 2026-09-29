@@ -1,5 +1,21 @@
 import { z } from 'zod';
 
+export const LLM_PROVIDERS = ['google', 'openai', 'anthropic'] as const;
+export type LlmProvider = (typeof LLM_PROVIDERS)[number];
+
+// LLM_MODEL を省略したときのモデル
+const DEFAULT_LLM_MODELS: Record<LlmProvider, string> = {
+  google: 'gemini-3.8-flash',
+  openai: 'gpt-5.4-mini',
+  anthropic: 'claude-sonnet-5',
+};
+
+const LLM_API_KEYS = {
+  google: 'GOOGLE_API_KEY',
+  openai: 'OPENAI_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY',
+} as const satisfies Record<LlmProvider, string>;
+
 const emailFrom = z
   .string()
   .max(200)
@@ -42,6 +58,19 @@ const envSchema = z.object({
     .url({ protocol: /^https?$/ })
     .transform((v) => v.replace(/\/+$/, ''))
     .optional(),
+  // ---- AI（食事の提案・習慣レポート）。選んだプロバイダの API キーがあるときだけ有効 ----
+  // 切り替えは LLM_PROVIDER / LLM_MODEL だけで行う。キーは各 SDK の標準の変数名
+  LLM_PROVIDER: z.enum(LLM_PROVIDERS).optional(),
+  LLM_MODEL: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$/)
+    .optional(),
+  GOOGLE_API_KEY: z.string().trim().min(1).optional(),
+  OPENAI_API_KEY: z.string().trim().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().trim().min(1).optional(),
+  // 定期実行（Vercel Cron）の認証。Vercel は `Authorization: Bearer <CRON_SECRET>` を付けて呼ぶ。未設定なら Cron は無効
+  CRON_SECRET: z.string().trim().min(32).optional(),
   CORS_ORIGINS: z
     .string()
     .default('')
@@ -60,7 +89,15 @@ export type AppConfig = Omit<z.infer<typeof envSchema>, 'DB_POOL_MAX'> & {
   dbSchema: string;
   /** メール送信の設定。未設定なら招待メールは送れない */
   mail?: { transport: MailTransport; from: string; appUrl: string };
+  /** AI の設定。未設定なら AI 機能は使えない（503） */
+  ai?: AiConfig;
 };
+
+export interface AiConfig {
+  provider: LlmProvider;
+  model: string;
+  apiKey: string;
+}
 
 /** 送信手段。RESEND_API_KEY があれば Resend、なければ SMTP（ローカルの Mailpit） */
 export type MailTransport =
@@ -140,5 +177,34 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
     }
     config.mail = { transport, from, appUrl: APP_URL };
   }
+  config.ai = loadAiConfig(config);
+  if (
+    config.CRON_SECRET &&
+    deployed &&
+    PLACEHOLDER_SECRET.test(config.CRON_SECRET)
+  ) {
+    throw new Error('CRON_SECRET must not be a placeholder value');
+  }
   return config;
+}
+
+function loadAiConfig(config: AppConfig): AiConfig | undefined {
+  const provider = config.LLM_PROVIDER ?? 'google';
+  const apiKey = config[LLM_API_KEYS[provider]];
+  if (!apiKey) {
+    // プロバイダやモデルを指定したのにキーがない、または別のプロバイダのキーだけがあるのは設定漏れなので、
+    // 黙って無効にせず起動を止める
+    const otherKey = Object.values(LLM_API_KEYS).some((k) => config[k]);
+    if (config.LLM_PROVIDER || config.LLM_MODEL || otherKey) {
+      throw new Error(
+        `Invalid environment variables: ${LLM_API_KEYS[provider]} is required for LLM_PROVIDER=${provider}`,
+      );
+    }
+    return undefined;
+  }
+  return {
+    provider,
+    model: config.LLM_MODEL ?? DEFAULT_LLM_MODELS[provider],
+    apiKey,
+  };
 }

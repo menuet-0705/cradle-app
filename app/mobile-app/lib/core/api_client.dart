@@ -111,6 +111,8 @@ String errorMessage(Object error) {
             : 'ログインが必要です';
       case 404:
         return 'データが見つかりませんでした';
+      case 409 when data is Map && data['code'] == 'TOO_MANY_CHILDREN':
+        return '1 つの家族に登録できるこどもは 10 人までです';
       case 409:
         return 'このメールアドレスは既に登録されています';
       case 429:

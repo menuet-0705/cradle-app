@@ -7,9 +7,51 @@
     "api/index.js": {
       "includeFiles": "dist/**",
       "maxDuration": 10
+    },
+    "api/ai.js": {
+      "includeFiles": "dist/**",
+      "maxDuration": 60
     }
   },
+  "crons": [
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 8 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 9 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 10 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 11 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 12 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 13 * * 5"
+    },
+    {
+      "path": "/api/v1/internal/cron/weekly-reports",
+      "schedule": "0 14 * * 5"
+    }
+  ],
   "rewrites": [
+    {
+      "source": "/api/v1/children/:childId/ai/:path*",
+      "destination": "/api/ai"
+    },
+    {
+      "source": "/api/v1/internal/:path*",
+      "destination": "/api/ai"
+    },
     {
       "source": "/api/(.*)",
       "destination": "/api"

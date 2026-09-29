@@ -23,6 +23,9 @@ export default defineConfig({
       SMTP_URL: 'smtp://localhost:1025',
       EMAIL_FROM: 'すくすく記録 <no-reply@cradle.test>',
       APP_URL: 'http://localhost:8080',
+      // LLM はテストで差し替えるので、実際には呼ばない
+      GOOGLE_API_KEY: 'test-google-api-key',
+      CRON_SECRET: 'test-cron-secret-0123456789-0123456789',
     },
   },
 });

@@ -9,17 +9,21 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid()) @db.Uuid
-  email         String         @unique
-  passwordHash  String         @map("password_hash")
-  name          String
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  memberships   FamilyMember[]
-  refreshTokens RefreshToken[]
-  records       Record[]
-  sentInvites   FamilyInvite[] @relation("InviteCreatedBy")
-  usedInvites   FamilyInvite[] @relation("InviteUsedBy")
+  id                String           @id @default(uuid()) @db.Uuid
+  email             String           @unique
+  passwordHash      String           @map("password_hash")
+  name              String
+  /// 習慣レポート完成のメール通知を受け取るか
+  weeklyReportEmail Boolean          @default(true) @map("weekly_report_email")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  memberships       FamilyMember[]
+  refreshTokens     RefreshToken[]
+  records           Record[]
+  sentInvites       FamilyInvite[]   @relation("InviteCreatedBy")
+  mealSuggestions   MealSuggestion[]
+  usedInvites       FamilyInvite[]   @relation("InviteUsedBy")
+  aiUsages          AiUsage[]
 
   @@map("users")
 }
@@ -59,15 +63,17 @@ enum Sex {
 }
 
 model Child {
-  id        String   @id @default(uuid()) @db.Uuid
-  familyId  String   @map("family_id") @db.Uuid
-  name      String
-  birthDate DateTime @map("birth_date") @db.Date
-  sex       Sex?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  family    Family   @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  records   Record[]
+  id              String           @id @default(uuid()) @db.Uuid
+  familyId        String           @map("family_id") @db.Uuid
+  name            String
+  birthDate       DateTime         @map("birth_date") @db.Date
+  sex             Sex?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  family          Family           @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  records         Record[]
+  mealSuggestions MealSuggestion[]
+  weeklyReports   WeeklyReport[]
 
   @@index([familyId])
   @@map("children")
@@ -132,4 +138,58 @@ model FamilyInvite {
   @@index([familyId, createdAt])
   @@index([createdById, createdAt])
   @@map("family_invites")
+}
+
+/// AI による食事の提案。生成前に行を作ってから回数を数える（同時に依頼されても上限を超えない）
+/// content が null で failedAt も null の行は生成中（強制終了で残った行は一定時間後に使用回数から外す）
+model MealSuggestion {
+  id          String    @id @default(uuid()) @db.Uuid
+  childId     String    @map("child_id") @db.Uuid
+  createdById String?   @map("created_by_id") @db.Uuid
+  /// 好み・不足気味の栄養・提案 3 件（meal-suggestion.graph.ts の MealSuggestionContent）
+  content     Json?
+  /// 生成に使ったモデル（例: google:gemini-3.8-flash）
+  model       String
+  /// 生成に失敗した日時。失敗も「試行」として回数に数える（LLM の料金は失敗しても発生するため）
+  failedAt    DateTime? @map("failed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  child       Child     @relation(fields: [childId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([childId, createdAt])
+  @@map("meal_suggestions")
+}
+
+/// AI（LLM）の利用記録。ユーザー単位・全体の 1 日の上限を数える。
+/// こどもを削除しても消さない（削除と作り直しで上限を戻させない）。ユーザーの削除でも行は残す
+model AiUsage {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("ai_usages")
+}
+
+/// AI による 1 週間の習慣レポート。(childId, periodEnd) で一意なので再実行しても重複しない
+model WeeklyReport {
+  id          String    @id @default(uuid()) @db.Uuid
+  childId     String    @map("child_id") @db.Uuid
+  periodStart DateTime  @map("period_start") @db.Timestamptz(3)
+  periodEnd   DateTime  @map("period_end") @db.Timestamptz(3)
+  /// 集計値（weekly-report.graph.ts の WeeklyReportSummary）
+  summary     Json
+  /// よかった点・気になる点・傾向（WeeklyReportContent）
+  content     Json
+  model       String
+  /// メール通知済み。null → 日時 に 1 回だけ更新できた実行が通知する（二重送信防止）
+  notifiedAt  DateTime? @map("notified_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  child       Child     @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([childId, periodEnd])
+  @@index([periodEnd, notifiedAt])
+  @@map("weekly_reports")
 }

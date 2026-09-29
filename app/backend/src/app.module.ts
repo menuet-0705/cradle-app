@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { AiModule } from './ai/ai.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { ChildrenModule } from './children/children.module.js';
 import { RateLimitGuard, RateLimitStore } from './common/rate-limit.js';
@@ -19,6 +20,7 @@ import { RecordsModule } from './records/records.module.js';
     ChildrenModule,
     RecordsModule,
     FamiliesModule,
+    AiModule,
   ],
   controllers: [HealthController],
   providers: [RateLimitStore, { provide: APP_GUARD, useClass: RateLimitGuard }],

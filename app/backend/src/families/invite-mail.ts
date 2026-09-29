@@ -1,3 +1,4 @@
+import { escapeHtml, plain } from '../mail/mail-text.js';
 import type { MailMessage } from '../mail/mailer.js';
 import { formatInviteCode } from './invite-code.js';
 
@@ -9,24 +10,6 @@ interface InviteMailInput {
   appUrl: string;
   expiresAt: Date;
 }
-
-const HTML_ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-};
-const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
-
-// 制御文字と、表示順を入れ替えたり見えない文字を差し込んだりできる文字（なりすまし文面対策）
-const UNSAFE_CHARS =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
-
-// 利用者が入力した名前は改行・制御文字を除き、長さも抑える（件名への注入・なりすまし文面対策）
-const plain = (s: string, max = 50) =>
-  s.replace(UNSAFE_CHARS, ' ').trim().slice(0, max);
 
 export function buildInviteMail(input: InviteMailInput): MailMessage {
   const inviter = plain(input.inviterName);
