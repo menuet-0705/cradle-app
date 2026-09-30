@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:cradle/app.dart';
+import 'package:cradle/features/ai/ai_models.dart';
+import 'package:cradle/features/ai/ai_providers.dart';
 import 'package:cradle/features/auth/session.dart';
 import 'package:cradle/features/children/child.dart';
 import 'package:cradle/features/children/children_providers.dart';
@@ -67,6 +69,18 @@ Future<Widget> _app(
         ],
       ),
       dayRecordsProvider.overrideWith((ref, arg) async => dayRecords),
+      // グラフのタブへ移るテスト用
+      weightSeriesProvider.overrideWith((ref, childId) async => const []),
+      milkDailyProvider.overrideWith((ref, childId) async => const []),
+      chartCommentProvider.overrideWith(
+        (ref, arg) async => const ChartCommentState(
+          comment: null,
+          needsUpdate: false,
+          generating: false,
+          limitReached: false,
+          enabled: true,
+        ),
+      ),
     ],
     retry: (_, _) => null,
     child: const CradleApp(),
@@ -94,8 +108,22 @@ void main() {
     ),
   ];
 
+  // 記録タブの「日｜月」の切り替え（曜日の「日」「月」と区別するためアイコンで探す）
   Future<void> openCalendar(WidgetTester tester) async {
-    await tester.tap(find.byTooltip('カレンダーで見る'));
+    await tester.tap(find.byIcon(Icons.calendar_month_outlined));
+  }
+
+  /// 上に「日｜月」の切り替えがあるので、カレンダーの下の欄まで見える縦長の画面にする
+  void tall(WidgetTester tester) {
+    tester.view
+      ..physicalSize = const Size(800, 1200)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+  }
+
+  Future<void> showDays(WidgetTester tester) async {
+    await tester.tap(find.byIcon(Icons.view_day_outlined));
+    await tester.pumpAndSettle();
   }
 
   IconButton button(WidgetTester tester, String tooltip) =>
@@ -109,6 +137,7 @@ void main() {
   testWidgets('shows the grid right away with loading placeholders', (
     tester,
   ) async {
+    tall(tester);
     final repo = _FakeRecordsRepository()
       ..pending = Completer<List<DailySummary>>();
     await tester.pumpWidget(await _app(repo));
@@ -166,6 +195,7 @@ void main() {
   });
 
   testWidgets('shows an error and retries', (tester) async {
+    tall(tester);
     final repo = _FakeRecordsRepository()..error = Exception('offline');
     await tester.pumpWidget(await _app(repo));
     await tester.pumpAndSettle();
@@ -223,8 +253,8 @@ void main() {
     await tester.tap(find.text('この日の記録を見る'));
     await tester.pumpAndSettle();
 
-    // 記録画面に戻り、その日のページが出ている
-    expect(find.text('カレンダー'), findsNothing);
+    // 「日」に切り替わり、その日のページが出ている
+    expect(find.byTooltip('前の月'), findsNothing);
     expect(
       find.text(DateFormat('M月d日(E)', 'ja').format(lastMonth)),
       findsOneWidget,
@@ -291,9 +321,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.requested, [thisMonth]);
 
-    // 記録画面に戻り、記録を削除する
-    await tester.tap(find.byType(BackButton));
-    await tester.pumpAndSettle();
+    // 「日」に切り替えて、記録を削除する
+    await showDays(tester);
     await tester.tap(find.byTooltip('削除'));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, '削除'));
@@ -304,5 +333,105 @@ void main() {
     await openCalendar(tester);
     await tester.pumpAndSettle();
     expect(repo.requested, [thisMonth, thisMonth]);
+  });
+
+  testWidgets('switches between day and month, starting from the shown day', (
+    tester,
+  ) async {
+    final repo = _FakeRecordsRepository()..data = firstDay;
+    await tester.pumpWidget(await _app(repo));
+    await tester.pumpAndSettle();
+    String dayLabel(DateTime d) => DateFormat('M月d日(E)', 'ja').format(d);
+    expect(find.text(dayLabel(now)), findsOneWidget);
+
+    // 日で前の月の日まで戻ってから月に切り替えると、その月が出る
+    final target = DateTime(now.year, now.month, 0); // 先月の末日
+    // 今日から先月の末日までは now.day 日
+    for (var i = 0; i < now.day; i++) {
+      await tester.tap(find.byTooltip('前の日'));
+      await tester.pumpAndSettle();
+    }
+    expect(find.text(dayLabel(target)), findsOneWidget);
+    await openCalendar(tester);
+    await tester.pumpAndSettle();
+    expect(find.text(monthLabel(lastMonth)), findsOneWidget);
+    // 日の一覧は出ていない
+    expect(find.byTooltip('前の日'), findsNothing);
+
+    await showDays(tester);
+    expect(find.text(dayLabel(target)), findsOneWidget);
+  });
+
+  testWidgets('adds a record to the day selected in the month view', (
+    tester,
+  ) async {
+    final repo = _FakeRecordsRepository()..data = firstDay;
+    await tester.pumpWidget(await _app(repo));
+    await tester.pumpAndSettle();
+    await openCalendar(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('前の月'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('記録を追加'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(ListTile, 'ミルク'));
+    await tester.pumpAndSettle();
+    expect(
+      find.textContaining(DateFormat('M月d日(E)', 'ja').format(lastMonth)),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('keeps the month view when coming back from another tab', (
+    tester,
+  ) async {
+    final repo = _FakeRecordsRepository()..data = firstDay;
+    await tester.pumpWidget(await _app(repo));
+    await tester.pumpAndSettle();
+    await openCalendar(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('グラフ'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('記録'));
+    await tester.pumpAndSettle();
+    expect(find.text(monthLabel(thisMonth)), findsOneWidget);
+  });
+
+  testWidgets('shows the day detail only after tapping a day', (tester) async {
+    tall(tester);
+    final repo = _FakeRecordsRepository()..data = firstDay;
+    await tester.pumpWidget(await _app(repo));
+    await tester.pumpAndSettle();
+    await openCalendar(tester);
+    await tester.pumpAndSettle();
+
+    // 月の表示にしただけでは詳細カードは出さず、月のまとめが見えている
+    expect(find.text('この日の記録を見る'), findsNothing);
+    expect(find.text('1日平均 720 ml'), findsOneWidget);
+
+    // 選んでいる日（今日）をタップすると出る
+    await tester.tap(find.text('${now.day}'));
+    await tester.pumpAndSettle();
+    expect(find.text('この日の記録を見る'), findsOneWidget);
+  });
+
+  testWidgets('goes back to the day view after logging out', (tester) async {
+    final repo = _FakeRecordsRepository()..data = firstDay;
+    await tester.pumpWidget(await _app(repo));
+    await tester.pumpAndSettle();
+    await openCalendar(tester);
+    await tester.pumpAndSettle();
+
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(Scaffold).first),
+    );
+    expect(container.read(recordsViewProvider), RecordsView.month);
+    await container.read(sessionProvider).clear();
+    await tester.pumpAndSettle();
+    expect(container.read(recordsViewProvider), RecordsView.day);
   });
 }

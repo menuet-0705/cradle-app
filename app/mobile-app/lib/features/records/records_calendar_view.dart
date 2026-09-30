@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/api_client.dart';
@@ -9,38 +8,42 @@ import 'daily_summary.dart';
 import 'growth_record.dart';
 import 'records_providers.dart';
 
-/// さかのぼれる月数（生年月日が分からないとき）。記録画面でさかのぼれる日数（10 年）と揃える
+/// さかのぼれる月数（生年月日が分からないとき）。日の表示でさかのぼれる日数（[recordsMaxPastDays]）を含む月まで
 const _maxPastMonths = 120;
 
 /// 前後の月へのページ送り（矢印ボタン）の動き
 const _pageDuration = Duration(milliseconds: 300);
 
-/// 1 か月の記録をカレンダーでまとめて見る画面。日付を選んで「この日の記録を見る」を押すと、
-/// その日を返して閉じる（記録画面がその日のページへ移る）
-class RecordsCalendarScreen extends ConsumerStatefulWidget {
-  const RecordsCalendarScreen({
+/// 記録タブの「月」の表示。1 か月の記録をカレンダーでまとめて見る。
+/// 選んでいる日は記録タブと共通（selectedDayProvider）で、「この日の記録を見る」で [onOpenDay] を呼ぶ
+class RecordsCalendarView extends ConsumerStatefulWidget {
+  const RecordsCalendarView({
     super.key,
     required this.childId,
-    required this.initialMonth,
+    required this.onOpenDay,
   });
 
   final String childId;
 
-  /// 最初に出す月（その月の 1 日）
-  final DateTime initialMonth;
+  /// 「この日の記録を見る」（選んでいる日は selectedDayProvider に入っている）
+  final VoidCallback onOpenDay;
 
   @override
-  ConsumerState<RecordsCalendarScreen> createState() =>
-      _RecordsCalendarScreenState();
+  ConsumerState<RecordsCalendarView> createState() =>
+      _RecordsCalendarViewState();
 }
 
-class _RecordsCalendarScreenState extends ConsumerState<RecordsCalendarScreen> {
+class _RecordsCalendarViewState extends ConsumerState<RecordsCalendarView> {
   /// ページ番号の基準の月（ページ番号 = この月から何か月前か）。
-  /// 開いたときに決める（開いたまま月をまたいだときは、開き直すまで新しい月へ進めない。まれなので割り切る）
-  late final DateTime _thisMonth;
-  late final PageController _pages;
+  /// アプリに戻ったときに今月へ追従する（前面に開いたまま月末の 0 時を過ぎたときは追従しない。まれなので割り切る）
+  late DateTime _thisMonth;
+  late PageController _pages;
   late int _page;
-  DateTime? _selected;
+  late final AppLifecycleListener _lifecycle;
+
+  /// 日付をタップしたか。選んでいる日の詳細カードは、タップしてから出す
+  /// （月の表示にしただけでは出さず、月のまとめが画面の下に押し出されないようにする）
+  bool _tapped = false;
 
   /// 矢印ボタンで動かしている途中の行き先（素早く続けて押したときに、その先へ進めるため）
   int? _animatingTo;
@@ -50,14 +53,36 @@ class _RecordsCalendarScreenState extends ConsumerState<RecordsCalendarScreen> {
     super.initState();
     final now = today();
     _thisMonth = DateTime(now.year, now.month);
-    _page = _pageOf(widget.initialMonth).clamp(0, _maxPastMonths);
+    // 日の表示で見ていた日の月から始める
+    final day = ref.read(selectedDayProvider) ?? now;
+    _page = _pageOf(DateTime(day.year, day.month)).clamp(0, _maxPastMonths);
     _pages = PageController(initialPage: _page, keepPage: false);
+    // 月の表示のまま月をまたいで戻ってきたら、新しい今月を基準に作り直す
+    _lifecycle = AppLifecycleListener(onShow: _followThisMonth);
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
     _pages.dispose();
     super.dispose();
+  }
+
+  /// 今月が変わっていたら、表示中の月はそのままで、新しい今月を基準にページを作り直す
+  void _followThisMonth() {
+    final now = today();
+    final thisMonth = DateTime(now.year, now.month);
+    if (!mounted || thisMonth == _thisMonth) return;
+    final shown = _monthOf(_page);
+    final old = _pages;
+    setState(() {
+      _thisMonth = thisMonth;
+      _page = _pageOf(shown).clamp(0, _maxPastMonths);
+      _pages = PageController(initialPage: _page, keepPage: false);
+      _animatingTo = null;
+    });
+    // 古い PageView はこのフレームの描画までコントローラを使うので、描画の後で破棄する
+    WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
   }
 
   int _pageOf(DateTime month) =>
@@ -96,61 +121,65 @@ class _RecordsCalendarScreenState extends ConsumerState<RecordsCalendarScreen> {
         .watch(monthSummaryProvider((childId: widget.childId, month: month)))
         .isLoading;
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('カレンダー')),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              children: [
-                IconButton(
-                  tooltip: '前の月',
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: _page < lastPage ? () => _step(lastPage, 1) : null,
-                ),
-                Expanded(
-                  child: Text(
-                    DateFormat('y年M月', 'ja').format(month),
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                IconButton(
-                  tooltip: '次の月',
-                  icon: const Icon(Icons.chevron_right),
-                  // 今月より先には進めない
-                  onPressed: _page > 0 ? () => _step(lastPage, -1) : null,
-                ),
-              ],
-            ),
-          ),
-          // 高さは常に確保して、表示の切り替えで画面がずれないようにする
-          SizedBox(
-            height: 4,
-            child: loading
-                ? const LinearProgressIndicator(semanticsLabel: '読み込み中')
-                : const Divider(height: 1),
-          ),
-          Expanded(
-            // reverse: 今月（0 ページ目）が右端。右スワイプで前の月、左スワイプで次の月
-            child: PageView.builder(
-              controller: _pages,
-              reverse: true,
-              itemCount: lastPage + 1,
-              onPageChanged: (p) => setState(() => _page = p),
-              itemBuilder: (_, p) => _MonthPage(
-                childId: widget.childId,
-                month: _monthOf(p),
-                birthDate: birthDate,
-                selected: _selected,
-                onSelect: (day) => setState(() => _selected = day),
-                onOpenDay: (day) => context.pop(day),
+    final selected = ref.watch(selectedDayProvider) ?? today();
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            children: [
+              IconButton(
+                tooltip: '前の月',
+                icon: const Icon(Icons.chevron_left),
+                onPressed: _page < lastPage ? () => _step(lastPage, 1) : null,
               ),
+              Expanded(
+                child: Text(
+                  DateFormat('y年M月', 'ja').format(month),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              IconButton(
+                tooltip: '次の月',
+                icon: const Icon(Icons.chevron_right),
+                // 今月より先には進めない
+                onPressed: _page > 0 ? () => _step(lastPage, -1) : null,
+              ),
+            ],
+          ),
+        ),
+        // 高さは常に確保して、表示の切り替えで画面がずれないようにする
+        SizedBox(
+          height: 4,
+          child: loading
+              ? const LinearProgressIndicator(semanticsLabel: '読み込み中')
+              : const Divider(height: 1),
+        ),
+        Expanded(
+          // reverse: 今月（0 ページ目）が右端。右スワイプで前の月、左スワイプで次の月
+          child: PageView.builder(
+            key: ValueKey(_thisMonth),
+            controller: _pages,
+            reverse: true,
+            itemCount: lastPage + 1,
+            onPageChanged: (p) => setState(() => _page = p),
+            itemBuilder: (_, p) => _MonthPage(
+              childId: widget.childId,
+              month: _monthOf(p),
+              birthDate: birthDate,
+              selected: selected,
+              showDetail: _tapped,
+              onSelect: (day) {
+                setState(() => _tapped = true);
+                ref.read(selectedDayProvider.notifier).select(day);
+              },
+              onOpenDay: widget.onOpenDay,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -162,6 +191,7 @@ class _MonthPage extends ConsumerWidget {
     required this.month,
     required this.birthDate,
     required this.selected,
+    required this.showDetail,
     required this.onSelect,
     required this.onOpenDay,
   });
@@ -170,8 +200,11 @@ class _MonthPage extends ConsumerWidget {
   final DateTime month;
   final DateTime? birthDate;
   final DateTime? selected;
+
+  /// 選んだ日の詳細カードを出すか（日付をタップしたあと）
+  final bool showDetail;
   final ValueChanged<DateTime> onSelect;
-  final ValueChanged<DateTime> onOpenDay;
+  final VoidCallback onOpenDay;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -206,7 +239,7 @@ class _MonthPage extends ConsumerWidget {
               message: errorMessage(async.error!),
               onRetry: () => ref.invalidate(provider),
             ),
-          if (selectedHere)
+          if (selectedHere && showDetail)
             // マスの下に出るので、小さい画面でも見えるところまでスクロールする
             _ScrollIntoView(
               trigger: day,
@@ -215,7 +248,7 @@ class _MonthPage extends ConsumerWidget {
                 summary: days?[day],
                 waiting: waiting,
                 failed: failed,
-                onOpen: () => onOpenDay(day),
+                onOpen: onOpenDay,
               ),
             ),
           _MonthTotalsCard(
@@ -314,13 +347,22 @@ class _MonthGrid extends StatelessWidget {
     if (d < 1 || d > daysInMonth) return const SizedBox.shrink();
     final date = DateTime(month.year, month.month, d);
     final born = birthDate == null ? null : DateUtils.dateOnly(birthDate!);
+    // 日の表示でさかのぼれる日より前は選べない（選ぶと日の表示と日付がずれる）
+    final earliest = DateTime(
+      now.year,
+      now.month,
+      now.day - recordsMaxPastDays,
+    );
     return _DayCell(
       date: date,
       summary: days?[date],
       waiting: waiting,
       isToday: date == now,
       // 未来の日と生まれる前の日は薄くして選べなくする
-      enabled: !date.isAfter(now) && (born == null || !date.isBefore(born)),
+      enabled:
+          !date.isAfter(now) &&
+          !date.isBefore(earliest) &&
+          (born == null || !date.isBefore(born)),
       selected: date == selected,
       onTap: () => onSelect(date),
     );
@@ -565,7 +607,7 @@ class _ScrollIntoViewState extends State<_ScrollIntoView> {
   Widget build(BuildContext context) => widget.child;
 }
 
-/// 選んだ日の要約と、記録画面のその日へ移るボタン
+/// 選んだ日の要約と、日の表示に切り替えてその日の記録を見るボタン
 class _DayDetail extends StatelessWidget {
   const _DayDetail({
     required this.day,
