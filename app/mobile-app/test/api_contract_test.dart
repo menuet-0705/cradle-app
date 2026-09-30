@@ -4,6 +4,7 @@
 import 'dart:io';
 
 import 'package:cradle/core/api_client.dart';
+import 'package:dio/dio.dart';
 import 'package:cradle/features/ai/ai_models.dart';
 import 'package:cradle/features/ai/ai_providers.dart';
 import 'package:cradle/features/auth/auth_repository.dart';
@@ -124,6 +125,20 @@ void main() {
     expect(milk.single.totalMl, 130);
     expect((await records.weightSeries(child.id)).single.weightG, 5300);
 
+    // カレンダーの日別の要約（今月分）
+    final summary = await records.dailySummary(
+      child.id,
+      from: DateTime(now.year, now.month),
+      to: DateTime(now.year, now.month + 1, 0),
+    );
+    final todaySummary = summary.singleWhere(
+      (d) => d.date == DateTime(now.year, now.month, now.day),
+    );
+    expect(todaySummary.milkMl, 130);
+    expect(todaySummary.milkCount, 1);
+    expect(todaySummary.weightG, 5300);
+    expect(todaySummary.mealCount, 1);
+
     // AI による分析（ローカルでは AI 未設定のこともあるので、生成はせず読み取りと設定だけ確認する）
     final ai = AiRepository(dio);
     final meal = await ai.latestMealSuggestion(child.id);
@@ -153,6 +168,25 @@ void main() {
     expect(session.tokens!.accessToken, isNot('expired'));
 
     await records.delete(day.first.id);
+
+    // こどもの削除: 家族の最後の 1 人は削除できない。2 人いれば削除できる
+    await expectLater(
+      children.delete(child.id),
+      throwsA(
+        isA<DioException>().having(
+          (e) => e.response?.data['code'],
+          'code',
+          'LAST_CHILD',
+        ),
+      ),
+    );
+    final second = await children.create(
+      name: 'じろう',
+      birthDate: DateTime(2026, 5, 1),
+    );
+    await children.delete(second.id);
+    expect((await children.list()).single.id, child.id);
+
     await auth.logout();
     expect(session.isLoggedIn, isFalse);
   }, skip: baseUrl == null ? 'API_CONTRACT_BASE_URL is not set' : false);

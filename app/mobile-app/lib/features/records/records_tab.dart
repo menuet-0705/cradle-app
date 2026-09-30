@@ -105,6 +105,17 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
     if (_animatingTo == target) _animatingTo = null;
   }
 
+  /// 月間カレンダーを開く。日付を選んで戻ってきたら、その日のページへ移る
+  Future<void> _openCalendar(DateTime day) async {
+    final picked = await context.push<DateTime>(
+      '/records/calendar',
+      extra: (childId: widget.childId, month: DateTime(day.year, day.month)),
+    );
+    if (picked == null || !mounted) return;
+    // ページが変わると onPageChanged で選んでいる日も追従する
+    _pages.jumpToPage(_pageOf(picked));
+  }
+
   @override
   Widget build(BuildContext context) {
     // 選んでいる日はページを動かしたときだけ変わる（ページが先に動き、onPageChanged で追従する）
@@ -123,10 +134,19 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
                 onPressed: page < _maxPastDays ? () => _step(page, 1) : null,
               ),
               Expanded(
-                child: Text(
-                  DateFormat('M月d日(E)', 'ja').format(day),
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium,
+                // 日付をタップすると月間カレンダーを開く
+                child: Center(
+                  child: Tooltip(
+                    message: 'カレンダーで見る',
+                    child: TextButton.icon(
+                      onPressed: () => _openCalendar(day),
+                      icon: const Icon(Icons.calendar_month_outlined),
+                      label: Text(
+                        DateFormat('M月d日(E)', 'ja').format(day),
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                  ),
                 ),
               ),
               IconButton(

@@ -13,9 +13,13 @@ import 'features/families/pending_invite.dart';
 import 'features/home/home_screen.dart';
 import 'features/records/growth_record.dart';
 import 'features/records/record_form_screen.dart';
+import 'features/records/records_calendar_screen.dart';
 
 typedef NewRecordArgs = ({String childId, RecordType type, DateTime day});
 typedef EditRecordArgs = ({String childId, GrowthRecord record});
+
+/// 月間カレンダー。[month] は最初に出す月。閉じるときに選んだ日（DateTime）を返すことがある
+typedef RecordsCalendarArgs = ({String childId, DateTime month});
 
 const _publicPaths = {'/login', '/signup'};
 
@@ -66,6 +70,17 @@ final routerProvider = Provider<GoRouter>((ref) {
             childId: args.childId,
             type: args.type,
             initialDay: args.day,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/records/calendar',
+        redirect: (_, state) => state.extra is RecordsCalendarArgs ? null : '/',
+        builder: (_, state) {
+          final args = state.extra! as RecordsCalendarArgs;
+          return RecordsCalendarScreen(
+            childId: args.childId,
+            initialMonth: args.month,
           );
         },
       ),

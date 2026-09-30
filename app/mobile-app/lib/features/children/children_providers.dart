@@ -45,6 +45,9 @@ class ChildrenRepository {
     return Child.fromJson(res.data!);
   }
 
+  /// 記録・AI の結果もまとめて消える。家族の最後の 1 人は削除できない（409 LAST_CHILD）
+  Future<void> delete(String id) => _dio.delete<void>('/children/$id');
+
   Map<String, dynamic> _body(String name, DateTime birthDate, Sex? sex) => {
     'name': name,
     'birthDate': _date.format(birthDate),
