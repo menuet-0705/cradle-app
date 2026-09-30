@@ -58,11 +58,28 @@
 ## Task Management
 
 1. **Plan First**: Write plan to `.steering/yyyyMMdd-${task-name}.md` (date in JST, task-name in kebab-case) with checkable items
-2. **Verify Plan**: Check in before starting implementation
+2. **Verify Plan**: Check in before starting implementation. Once the human approves, add `承認: 済み（yyyy-MM-dd）` right under the plan's title
 3. **Track Progress**: Mark items complete as you go
 4. **Explain Changes**: High-level summary at each step
 5. **Document Results**: Add review section to the same `.steering/yyyyMMdd-${task-name}.md` file
 6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+
+## Unattended Cloud Runs (no human in the loop)
+
+Flow: design locally → commit/push an approved plan → implement in a cloud session (Claude Code `claude --cloud`, Codex cloud, etc.) → open a PR → a human reviews and merges.
+These rules apply ONLY when running in a cloud session with no human to answer. They override "Plan mode" and "Verify Plan" above; everything else (reviews, security, simplicity) still applies.
+
+- **Start only from an approved plan**: The prompt names a `.steering/*.md` file that contains `承認: 済み`. If the file is missing or not approved, do not implement: report why and stop
+- **Do not ask, decide**: Implement exactly the plan's scope. When something is ambiguous, choose the simplest option that fits the plan and record it under "判断したこと" in the plan. Do not expand scope (no unrelated refactors or dependency upgrades)
+- **Stop instead of guessing on**: DB migrations that drop or rewrite data, new external services or paid APIs, auth/permission model changes, or anything needing a secret. Write the question in the plan and the PR, and open the PR as a draft
+- **Verify before the PR**: Run the checks for what you touched and fix failures
+  - backend: `npm run lint` / `npm run test` / `npm run test:e2e` (needs Postgres: `docker compose up -d --wait` from the repo root) / `npm run build`
+  - mobile-app: `flutter analyze` / `flutter test`
+  - If a check cannot run in the cloud environment, say which one and why in the PR — never claim it passed
+- **Reviews are still mandatory**: Run code-reviewer and security-reviewer (section 7). Fix Critical/High and re-run until they pass. Record the results in the plan's review section
+- **Git**: Work on a `claude/`-prefixed branch. Never push to `master`, never force-push, never merge. Commit the plan updates together with the code
+- **Open the PR**: Title in Japanese. Body in Japanese with: 目的（link to the plan）/ 変更内容 / 判断したこと / 検証結果（commands and results, including skipped ones）/ レビュー結果 / 残るリスク・人に見てほしい点. If a Critical/High finding is unresolved, open it as a draft and say so at the top
+- **Secrets**: The cloud environment has no secrets and needs none (e2e tests use the values in `vitest.config.e2e.ts`). Never add secret values to environment variables, code, or the PR
 
 ## Core Principles
 
