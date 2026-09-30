@@ -78,8 +78,61 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
     }
   }
 
+  Future<void> _delete(Child child) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('${child.name}を削除しますか？'),
+        content: const Text(
+          'これまでの記録・AI による分析・習慣レポートもすべて削除され、元に戻せません。'
+          '家族のほかのメンバーからも見えなくなります。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('削除する'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _saving = true);
+    try {
+      await ref.read(childrenRepositoryProvider).delete(child.id);
+      // 選択を外して、一覧の先頭のこどもを選ぶ
+      ref.invalidate(selectedChildIdProvider);
+      ref.invalidate(childrenProvider);
+      if (mounted) context.pop();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(errorMessage(e))));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final existing = widget.child;
+    // 家族のこどもが 0 人にならないよう、最後の 1 人は削除できない（サーバーでも確認する）
+    // 一覧を読み込めていない間は人数が分からないので押せなくする（理由の文言は出さない）
+    final siblings = existing == null
+        ? null
+        : ref
+              .watch(childrenProvider)
+              .value
+              ?.where((c) => c.familyId == existing.familyId)
+              .length;
+    final canDelete = siblings != null && siblings > 1;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.child == null ? 'こどもを登録' : 'こどもの情報を編集'),
@@ -135,6 +188,29 @@ class _ChildFormScreenState extends ConsumerState<ChildFormScreen> {
               onPressed: _saving ? null : _save,
               child: const Text('保存する'),
             ),
+            if (existing != null) ...[
+              const SizedBox(height: 40),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: _saving || !canDelete
+                    ? null
+                    : () => _delete(existing),
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('このこどもを削除'),
+              ),
+              if (siblings != null && !canDelete) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'こどもが 1 人だけのときは削除できません',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ],
           ],
         ),
       ),

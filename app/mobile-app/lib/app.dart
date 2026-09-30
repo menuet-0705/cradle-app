@@ -69,6 +69,8 @@ final routerProvider = Provider<GoRouter>((ref) {
           );
         },
       ),
+      // 以前の月間カレンダーの画面（今は記録タブの「月」）。履歴・ブックマークから開かれたらホームへ
+      GoRoute(path: '/records/calendar', redirect: (_, _) => '/'),
       GoRoute(
         path: '/records/edit',
         redirect: (_, state) => state.extra is EditRecordArgs ? null : '/',
