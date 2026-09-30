@@ -25,6 +25,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
+    "db:seed:dev": "node scripts/seed-dev.mjs",
     "postinstall": "prisma generate"
   },
   "dependencies": {
