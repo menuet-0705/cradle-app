@@ -440,6 +440,8 @@ describe('AI features (e2e)', () => {
   describe('per-user limit', () => {
     it('keeps counting after the child is deleted (new accounts: 6 per day)', async () => {
       const mama = await signup('ママ');
+      // 家族の最後の 1 人は削除できないので、削除しないこどもを 1 人登録しておく
+      await addChild(mama.token, 'のこる子');
       for (let round = 0; round < 2; round++) {
         const child = await addChild(mama.token, `こども${round}`);
         await addMeal(
@@ -648,6 +650,8 @@ describe('AI features (e2e)', () => {
     it('limits each user per day, even if children are deleted', async () => {
       // 作成から 1 日以内のアカウントは 1 日 6 回（食事の提案とは別の枠）
       const mama = await signup('ママ');
+      // 家族の最後の 1 人は削除できないので、削除しないこどもを 1 人登録しておく
+      await addChild(mama.token, 'のこる子');
       for (let i = 0; i < 6; i++) {
         const child = await addChild(mama.token, `こども${i}`);
         await addWeight(mama.token, child.id, justNow(), 7000);

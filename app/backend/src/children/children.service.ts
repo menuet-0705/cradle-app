@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { CreateChildDto, UpdateChildDto } from './children.dto.js';
 
@@ -17,6 +18,18 @@ const childSelect = {
   sex: true,
   createdAt: true,
 } as const;
+
+/**
+ * 家族のこどもの人数を確認してから登録・削除するためのロック（トランザクションの終わりで外れる）。
+ * 登録と削除で同じキーを使い、人数の確認を追い越されないようにする
+ * （キー名の create は、登録だけで使っていたころの名残。動いている処理とキーを揃えるため変えない）
+ */
+async function lockFamilyChildren(
+  tx: Prisma.TransactionClient,
+  familyId: string,
+) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('children:create:' || ${familyId}))`;
+}
 
 @Injectable()
 export class ChildrenService {
@@ -41,7 +54,7 @@ export class ChildrenService {
     // AI の提案・レポートの費用や通知メールを、こどもを大量に作って増やせないようにする。
     // 人数の確認と作成を同時リクエストで追い越されないよう、家族ごとのロックを取って 1 件ずつ行う
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('children:create:' || ${familyId}))`;
+      await lockFamilyChildren(tx, familyId);
       const count = await tx.child.count({ where: { familyId } });
       if (count >= MAX_CHILDREN_PER_FAMILY) {
         throw new ConflictException({
@@ -74,9 +87,38 @@ export class ChildrenService {
     });
   }
 
+  /**
+   * こどもの削除（記録・AI の結果もまとめて消える）。家族のこどもが 0 人にならないよう、
+   * 最後の 1 人は削除できない（409 LAST_CHILD）
+   */
   async remove(userId: string, childId: string) {
-    await this.assertAccess(userId, childId);
-    await this.prisma.child.delete({ where: { id: childId } });
+    const child = await this.prisma.child.findFirst({
+      where: { id: childId, family: { members: { some: { userId } } } },
+      select: { familyId: true },
+    });
+    if (!child) throw new NotFoundException('Child not found');
+    const { familyId } = child;
+
+    // 同時に 2 人を削除して 0 人になるのを防ぐ。登録と同じロックで、人数の確認と削除を 1 件ずつ行う
+    await this.prisma.$transaction(async (tx) => {
+      await lockFamilyChildren(tx, familyId);
+      const count = await tx.child.count({ where: { familyId } });
+      if (count <= 1) {
+        throw new ConflictException({
+          message: 'Cannot delete the last child in the family',
+          code: 'LAST_CHILD',
+        });
+      }
+      // ロックを待つ間に消されていた・家族から外されていたら 404
+      const { count: deleted } = await tx.child.deleteMany({
+        where: {
+          id: childId,
+          familyId,
+          family: { members: { some: { userId } } },
+        },
+      });
+      if (deleted === 0) throw new NotFoundException('Child not found');
+    });
   }
 
   /**

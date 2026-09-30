@@ -91,7 +91,8 @@ export const listRecordsSchema = z
   });
 export type ListRecordsDto = z.infer<typeof listRecordsSchema>;
 
-export const milkDailySchema = z
+// 日別の集計（ミルクの合計・カレンダーの要約）の範囲。日付は tz で区切る
+export const dailyRangeSchema = z
   .object({
     from: z.iso.date(),
     to: z.iso.date(),
@@ -102,4 +103,4 @@ export const milkDailySchema = z
     (v) => +new Date(v.to) - +new Date(v.from) <= MAX_RANGE_DAYS * 24 * HOUR_MS,
     { message: `Range must be ${MAX_RANGE_DAYS} days or less` },
   );
-export type MilkDailyDto = z.infer<typeof milkDailySchema>;
+export type DailyRangeDto = z.infer<typeof dailyRangeSchema>;

@@ -821,6 +821,11 @@ describe('cradle API (e2e)', () => {
         .get(`/api/v1/children/${childId}/stats/weight`)
         .set(h)
         .expect(404);
+      await api()
+        .get(`/api/v1/children/${childId}/stats/daily-summary`)
+        .query({ from: '2026-08-01', to: '2026-08-31', tz: 'UTC' })
+        .set(h)
+        .expect(404);
       await api().delete(`/api/v1/records/${recordId}`).set(h).expect(404);
       await api().delete(`/api/v1/children/${childId}`).set(h).expect(404);
 
@@ -843,6 +848,188 @@ describe('cradle API (e2e)', () => {
         .delete(`/api/v1/records/${recordId}`)
         .set(auth(owner.accessToken))
         .expect(204);
+    });
+
+    it('summarizes records per day for the calendar', async () => {
+      const { accessToken } = await signup();
+      const h = auth(accessToken);
+      const child = await api()
+        .post('/api/v1/children')
+        .set(h)
+        .send({ name: 'じろう', birthDate: '2026-04-01' })
+        .expect(201);
+      const childId = (child.body as { id: string }).id;
+      const post = (body: object) =>
+        api()
+          .post(`/api/v1/children/${childId}/records`)
+          .set(h)
+          .send(body)
+          .expect(201);
+
+      // 8/27 23:30 JST（UTC では 8/27 14:30）
+      await post({
+        type: 'MILK',
+        startedAt: '2026-08-27T23:30:00+09:00',
+        amountMl: 100,
+      });
+      // 8/28 00:30 JST（UTC では 8/27 15:30）: JST では 8/28、UTC では 8/27 に数える
+      await post({
+        type: 'MILK',
+        startedAt: '2026-08-28T00:30:00+09:00',
+        amountMl: 120,
+      });
+      await post({
+        type: 'MILK',
+        startedAt: '2026-08-28T09:00:00+09:00',
+        amountMl: 80,
+      });
+      // 日付をまたぐ睡眠は始まった日に数える
+      await post({
+        type: 'SLEEP',
+        startedAt: '2026-08-28T21:00:00+09:00',
+        endedAt: '2026-08-29T06:30:00+09:00',
+      });
+      await post({
+        type: 'SLEEP',
+        startedAt: '2026-08-28T13:00:00+09:00',
+        endedAt: '2026-08-28T14:15:00+09:00',
+      });
+      await post({
+        type: 'WEIGHT',
+        startedAt: '2026-08-28T10:00:00+09:00',
+        weightG: 7200,
+        tz: 'Asia/Tokyo',
+      });
+      await post({
+        type: 'MEAL',
+        startedAt: '2026-08-28T12:00:00+09:00',
+        mealSlot: 'LUNCH',
+        tz: 'Asia/Tokyo',
+        note: 'おかゆ',
+      });
+
+      const summary = (q: object) =>
+        api()
+          .get(`/api/v1/children/${childId}/stats/daily-summary`)
+          .query(q)
+          .set(h);
+
+      const jst = await summary({
+        from: '2026-08-01',
+        to: '2026-08-31',
+        tz: 'Asia/Tokyo',
+      }).expect(200);
+      expect(jst.body).toEqual([
+        {
+          date: '2026-08-27',
+          milkMl: 100,
+          milkCount: 1,
+          sleepMinutes: 0,
+          sleepCount: 0,
+          weightG: null,
+          mealCount: 0,
+        },
+        {
+          date: '2026-08-28',
+          milkMl: 200,
+          milkCount: 2,
+          sleepMinutes: 570 + 75,
+          sleepCount: 2,
+          weightG: 7200,
+          mealCount: 1,
+        },
+      ]);
+
+      // 1 日 1 件になる前に登録された同じ日の体重が残っていても、最新の 1 件を返す
+      await prisma.record.create({
+        data: {
+          childId,
+          type: 'WEIGHT',
+          startedAt: new Date('2026-08-28T08:00:00+09:00'),
+          weightG: 7100,
+        },
+      });
+      const latest = await summary({
+        from: '2026-08-28',
+        to: '2026-08-28',
+        tz: 'Asia/Tokyo',
+      }).expect(200);
+      expect(latest.body).toEqual([expect.objectContaining({ weightG: 7200 })]);
+
+      // 同じ記録でも、UTC で区切ると 00:30 JST のミルクは 8/27 になる
+      const utc = await summary({
+        from: '2026-08-27',
+        to: '2026-08-27',
+        tz: 'UTC',
+      }).expect(200);
+      expect(utc.body).toEqual([
+        expect.objectContaining({ date: '2026-08-27', milkMl: 220 }),
+      ]);
+
+      // 範囲外・範囲の上限・不正な tz
+      const empty = await summary({
+        from: '2026-07-01',
+        to: '2026-07-31',
+        tz: 'Asia/Tokyo',
+      }).expect(200);
+      expect(empty.body).toEqual([]);
+      await summary({
+        from: '2026-01-01',
+        to: '2026-08-31',
+        tz: 'Asia/Tokyo',
+      }).expect(400);
+      await summary({
+        from: '2026-08-01',
+        to: '2026-08-31',
+        tz: '+09:00',
+      }).expect(400);
+    });
+
+    it('deletes a child but keeps at least one per family', async () => {
+      const owner = await signup('A');
+      const h = auth(owner.accessToken);
+      const create = async (name: string) => {
+        const res = await api()
+          .post('/api/v1/children')
+          .set(h)
+          .send({ name, birthDate: '2026-01-01' })
+          .expect(201);
+        return (res.body as { id: string }).id;
+      };
+
+      const first = await create('いちろう');
+      // 家族に 1 人だけなら削除できない
+      const last = await api()
+        .delete(`/api/v1/children/${first}`)
+        .set(h)
+        .expect(409);
+      expect(last.body).toMatchObject({ code: 'LAST_CHILD' });
+
+      // 2 人いれば削除でき、記録も一緒に消える
+      const second = await create('じろう');
+      await api()
+        .post(`/api/v1/children/${second}/records`)
+        .set(h)
+        .send({
+          type: 'MILK',
+          startedAt: '2026-08-28T10:00:00Z',
+          amountMl: 100,
+        })
+        .expect(201);
+      await api().delete(`/api/v1/children/${second}`).set(h).expect(204);
+      expect(await prisma.record.count({ where: { childId: second } })).toBe(0);
+      await api().delete(`/api/v1/children/${second}`).set(h).expect(404);
+
+      // 同時に 2 人を削除しても、1 人は残る
+      const third = await create('さぶろう');
+      const results = await Promise.all(
+        [first, third].map((id) =>
+          api().delete(`/api/v1/children/${id}`).set(h),
+        ),
+      );
+      expect(results.map((r) => r.status).sort()).toEqual([204, 409]);
+      const list = await api().get('/api/v1/children').set(h).expect(200);
+      expect(list.body).toHaveLength(1);
     });
   });
 });

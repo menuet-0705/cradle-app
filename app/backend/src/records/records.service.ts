@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type {
   CreateRecordDto,
   ListRecordsDto,
-  MilkDailyDto,
+  DailyRangeDto,
 } from './records.dto.js';
 
 const recordSelect = {
@@ -232,13 +232,13 @@ export class RecordsService {
     });
   }
 
-  async milkDaily(userId: string, childId: string, q: MilkDailyDto) {
+  async milkDaily(userId: string, childId: string, q: DailyRangeDto) {
     await this.children.assertAccess(userId, childId);
     return this.milkDailyOf(childId, q);
   }
 
   /** 1 日ごとのミルクの合計（権限の確認は呼び出し側で済ませる。グラフの AI コメントも使う） */
-  async milkDailyOf(childId: string, q: MilkDailyDto) {
+  async milkDailyOf(childId: string, q: DailyRangeDto) {
     // 値は全てバインド変数で渡す（$queryRaw のタグ付きテンプレート）
     const rows = await this.prisma.$queryRaw<
       { date: string; totalMl: bigint; count: bigint }[]
@@ -259,6 +259,49 @@ export class RecordsService {
       date: r.date,
       totalMl: Number(r.totalMl),
       count: Number(r.count),
+    }));
+  }
+
+  /**
+   * カレンダー用の 1 日ごとの要約（記録がある日だけ）。睡眠は始まった日に数える（記録の一覧と同じ区切り）。
+   * 体重はその日の最新 1 件
+   */
+  async dailySummary(userId: string, childId: string, q: DailyRangeDto) {
+    await this.children.assertAccess(userId, childId);
+    const rows = await this.prisma.$queryRaw<
+      {
+        date: string;
+        milkMl: bigint;
+        milkCount: bigint;
+        sleepMinutes: bigint;
+        sleepCount: bigint;
+        weightG: number | null;
+        mealCount: bigint;
+      }[]
+    >`
+      SELECT to_char((started_at AT TIME ZONE ${q.tz})::date, 'YYYY-MM-DD') AS "date",
+             COALESCE(SUM(amount_ml) FILTER (WHERE type = 'MILK'), 0) AS "milkMl",
+             COUNT(*) FILTER (WHERE type = 'MILK') AS "milkCount",
+             COALESCE(SUM(EXTRACT(EPOCH FROM ended_at - started_at)) FILTER (WHERE type = 'SLEEP'), 0)::bigint / 60 AS "sleepMinutes",
+             COUNT(*) FILTER (WHERE type = 'SLEEP') AS "sleepCount",
+             (ARRAY_AGG(weight_g ORDER BY started_at DESC, created_at DESC) FILTER (WHERE type = 'WEIGHT'))[1] AS "weightG",
+             COUNT(*) FILTER (WHERE type = 'MEAL') AS "mealCount"
+        FROM ${this.prisma.schema}.records
+       WHERE child_id = ${childId}::uuid
+         -- インデックス (child_id, started_at) を使うための粗い範囲（タイムゾーン差を含めて前後に余裕を持たせる）
+         AND started_at >= ${q.from}::date - interval '1 day'
+         AND started_at <  ${q.to}::date + interval '2 days'
+         AND (started_at AT TIME ZONE ${q.tz})::date BETWEEN ${q.from}::date AND ${q.to}::date
+       GROUP BY 1
+       ORDER BY 1`;
+    return rows.map((r) => ({
+      date: r.date,
+      milkMl: Number(r.milkMl),
+      milkCount: Number(r.milkCount),
+      sleepMinutes: Number(r.sleepMinutes),
+      sleepCount: Number(r.sleepCount),
+      weightG: r.weightG,
+      mealCount: Number(r.mealCount),
     }));
   }
 }

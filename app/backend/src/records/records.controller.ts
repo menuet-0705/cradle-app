@@ -15,10 +15,10 @@ import { ZodValidationPipe } from '../common/zod-validation.pipe.js';
 import {
   createRecordSchema,
   listRecordsSchema,
-  milkDailySchema,
+  dailyRangeSchema,
   type CreateRecordDto,
   type ListRecordsDto,
-  type MilkDailyDto,
+  type DailyRangeDto,
 } from './records.dto.js';
 import { RecordsService } from './records.service.js';
 
@@ -76,8 +76,17 @@ export class RecordsController {
   milkDaily(
     @CurrentUser() user: AuthUser,
     @Param('childId', ParseUUIDPipe) childId: string,
-    @Query(new ZodValidationPipe(milkDailySchema)) q: MilkDailyDto,
+    @Query(new ZodValidationPipe(dailyRangeSchema)) q: DailyRangeDto,
   ) {
     return this.records.milkDaily(user.id, childId, q);
+  }
+
+  @Get('children/:childId/stats/daily-summary')
+  dailySummary(
+    @CurrentUser() user: AuthUser,
+    @Param('childId', ParseUUIDPipe) childId: string,
+    @Query(new ZodValidationPipe(dailyRangeSchema)) q: DailyRangeDto,
+  ) {
+    return this.records.dailySummary(user.id, childId, q);
   }
 }

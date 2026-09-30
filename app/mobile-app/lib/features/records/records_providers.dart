@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart' show DateUtils;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../core/providers.dart';
 import '../../core/time_zone.dart';
 import '../ai/ai_providers.dart' show chartCommentProvider;
+import 'daily_summary.dart';
 import 'growth_record.dart';
 
 class WeightPoint {
@@ -100,6 +103,28 @@ class RecordsRepository {
       );
     }).toList();
   }
+
+  /// カレンダー用の 1 日ごとの要約（[from]〜[to] の日付を含む。記録がある日だけ返る）
+  Future<List<DailySummary>> dailySummary(
+    String childId, {
+    required DateTime from,
+    required DateTime to,
+    CancelToken? cancelToken,
+  }) async {
+    final tz = await deviceTimeZone();
+    final res = await _dio.get<List<dynamic>>(
+      '/children/$childId/stats/daily-summary',
+      queryParameters: {
+        'from': _date.format(from),
+        'to': _date.format(to),
+        'tz': tz,
+      },
+      cancelToken: cancelToken,
+    );
+    return res.data!
+        .map((e) => DailySummary.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
 }
 
 final recordsRepositoryProvider = Provider<RecordsRepository>(
@@ -157,9 +182,42 @@ final milkDailyProvider = FutureProvider.autoDispose
           .milkDaily(childId, from: from, to: to);
     });
 
+/// 月を行き来したときに読み込み直さないよう、カレンダーの月を画面から外れてから残しておく時間
+const _monthCacheDuration = Duration(minutes: 5);
+
+/// 月間カレンダーの 1 か月分（[month] は月の 1 日）。日付 → その日の要約
+final monthSummaryProvider = FutureProvider.autoDispose
+    .family<Map<DateTime, DailySummary>, ({String childId, DateTime month})>((
+      ref,
+      arg,
+    ) async {
+      // ログアウトしたら、残しておいた月も捨てる（ログアウト中は取得しない）
+      if (!ref.watch(isLoggedInProvider)) return const {};
+      // 画面から外れた月は、読み込み途中でも通信を止める
+      final cancel = CancelToken();
+      ref.onDispose(cancel.cancel);
+      final m = arg.month;
+      final days = await ref
+          .watch(recordsRepositoryProvider)
+          .dailySummary(
+            arg.childId,
+            from: DateTime(m.year, m.month),
+            to: DateTime(m.year, m.month + 1, 0),
+            cancelToken: cancel,
+          );
+      // 取得できた月だけ残す（失敗した月は、次に開いたときに取り直す）
+      final link = ref.keepAlive();
+      Timer? timer;
+      ref.onCancel(() => timer = Timer(_monthCacheDuration, link.close));
+      ref.onResume(() => timer?.cancel());
+      ref.onDispose(() => timer?.cancel());
+      return {for (final d in days) d.date: d};
+    });
+
 /// 記録の追加・削除後に、関連する表示をまとめて再取得する
 void invalidateRecords(WidgetRef ref) {
   ref.invalidate(dayRecordsProvider);
+  ref.invalidate(monthSummaryProvider);
   ref.invalidate(weightSeriesProvider);
   ref.invalidate(milkDailyProvider);
   // グラフの AI コメントも、データが変わったかどうかを判定し直す
