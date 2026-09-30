@@ -58,6 +58,32 @@ cd app/mobile-app && flutter run -d chrome   # http://localhost:8080
 
 本番と同じビルド・配信内容を確認したい場合は `cd app/backend && npm run build:web` で `public/` に出力されます（本番と揃えるため Flutter 3.47.5 が必要。バージョンが違うとエラーになります）。
 
+### ダミーデータ
+
+画面や AI 機能の確認用に、既存のこどもへ過去 30 日分の記録（ミルク・睡眠・体重・食事）を入れます。こどもはアプリで登録しておきます。
+
+```sh
+cd app/backend
+npm run db:seed:dev                 # こどもの一覧（id と直近 30 日の件数）
+npm run db:seed:dev -- <childId>    # ダミーを入れる
+```
+
+- 接続先は `SEED_DATABASE_URL`（未指定ならローカルの Docker の DB）。`.env` は読みません
+- 量や回数は月齢に合わせます（離乳食は生後 5 か月から、3 歳からはミルク・昼寝なし）。食事は「甘い野菜・炭水化物が多く、赤身の肉・魚が少ない」傾向にしてあります
+- 何度実行しても重複しません（同じ日・同じ区分の食事など、すでにある記録は入れない）。生まれる前と未来の時刻は入れません
+
+検証環境（Supabase）に入れるときは `--remote` を付けます。**本番には使わないでください。**
+
+```sh
+export SEED_DATABASE_URL='postgresql://postgres.<project-ref>:...@...pooler.supabase.com:5432/postgres?schema=<name>'
+npm run db:seed:dev -- --remote [<childId>]
+```
+
+- 接続後に `接続先: postgres.<project-ref>@...` を表示して y/N を聞くので、**project-ref が検証環境のものか確かめてから** `y` を押します（Supabase の pooler は本番と検証でホスト名が同じで、ここでしか見分けられません）。端末以外（パイプ・CI）からは実行できません
+- Session pooler / Direct（ポート 5432）を使います。Transaction pooler（6543）は schema の指定が効かないので拒否します
+- 常に SSL で接続します。`SEED_DATABASE_CA` に CA 証明書（Supabase の Database 設定からダウンロード）のパスを渡すと、サーバーの証明書も検証します
+- 接続文字列はパスワードを含むので、チャットやコマンドの記録に残さないようにしてください
+
 ## テスト
 
 ```sh

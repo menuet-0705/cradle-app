@@ -1,10 +1,15 @@
-// 開発環境（ローカルの docker の Postgres）専用: こどもに過去 30 日分のダミーの記録を入れる。
+// 開発・検証環境用: こどもに過去 30 日分のダミーの記録を入れる。本番には使わない。
 //
 // 使い方（app/backend で実行）:
-//   npm run db:seed:dev                … こどもの一覧
-//   npm run db:seed:dev -- <childId>   … ダミーの記録を入れる
+//   npm run db:seed:dev                         … こどもの一覧
+//   npm run db:seed:dev -- <childId>            … ダミーの記録を入れる
+//   npm run db:seed:dev -- --remote [<childId>] … localhost 以外（検証環境の Supabase など）に対して実行する
 //
-// - 接続先は SEED_DATABASE_URL（未指定なら docker compose の既定値）。localhost 以外には入れない
+// - 接続先は SEED_DATABASE_URL（未指定なら docker compose の既定値）
+// - localhost 以外は --remote を付けたときだけ。本番と検証は接続先からは見分けられないので、
+//   接続後に表示する接続先（ユーザー・DB）を見て、実行する人が y/N で確かめる（端末から実行するときだけ動く）
+//   - SSL で接続する。SEED_DATABASE_CA に CA 証明書（Supabase のダッシュボードから取得）のパスを渡すとサーバーも検証する
+//   - Supabase は Session pooler / Direct（5432）で。Transaction pooler（6543）では SET search_path が次の問い合わせに残らない
 // - ミルク・睡眠（昼寝と夜）・体重（週 1 回）・食事（生後 5 か月から。1 日 3 食 + 1 日おきにおやつ）
 // - 「1 日」は JST で区切る（端末が JST 以外で作った記録とは、日の境目がずれることがある）
 // - 食事は「好きなもの（かぼちゃ・さつまいも・バナナ・うどん）が多く、赤身の肉・魚が少ない」傾向にしてあるので、
@@ -12,6 +17,8 @@
 // - 時刻は日付から決まる。同じ記録（食事は 日 × 区分、体重は 日、ミルク・睡眠は 同じ時刻）がすでにあれば入れないので、
 //   何度実行しても重複しない。生まれる前と未来の時刻は入れない
 //   （時刻の表や salt を変えると過去に入れた分と時刻が変わり重複するので、そのときはダミーを消してから入れ直す）
+import { readFileSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import pg from 'pg';
 
 const DAYS = 30;
@@ -29,17 +36,33 @@ try {
   // URL 解析エラーには接続文字列（パスワード含む）が載るので、そのまま出さない
   fail('SEED_DATABASE_URL が URL として不正です');
 }
-if (
-  !['postgres:', 'postgresql:'].includes(parsed.protocol) ||
-  !LOCAL_HOSTS.has(parsed.hostname)
-) {
-  fail('開発環境専用です。localhost の DB だけに入れられます');
+const args = process.argv.slice(2);
+const remote = args.includes('--remote');
+const positional = args.filter((a) => a !== '--remote');
+if (positional.length > 1 || positional.some((a) => a.startsWith('-'))) {
+  fail('引数は [--remote] [<childId>] だけです');
 }
+if (!parsed.hostname) fail('SEED_DATABASE_URL にホスト名を書いてください');
+const isLocal = LOCAL_HOSTS.has(parsed.hostname);
+if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+  fail('SEED_DATABASE_URL は postgres:// か postgresql:// で指定してください');
+}
+if (!isLocal && !remote) {
+  fail(
+    'localhost 以外の DB には --remote を付けたときだけ入れられます（本番には使わないでください）',
+  );
+}
+if (!isLocal && parsed.port === '6543') {
+  fail(
+    'Transaction pooler（6543）では schema の指定が効かないので、Session pooler / Direct（5432）で接続してください',
+  );
+}
+// （URL にポートを書かず PGPORT で 6543 を指定した場合は判定できない。ポートは URL に書く）
 const schema = parsed.searchParams.get('schema') ?? 'public';
 if (!/^[A-Za-z_][A-Za-z0-9_-]{0,62}$/.test(schema)) {
   fail('schema の名前が不正です');
 }
-const childId = process.argv[2];
+const childId = positional[0];
 if (
   childId &&
   !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
@@ -367,18 +390,29 @@ const TODDLER_MENU = {
 // ---- 実行 ----
 
 // pg は ?schema= を解釈しないので外し、search_path で指定する。
-// ?host= などで接続先がホストの判定と食い違わないようにするためでもあるので、クエリは必ず全部外す
+// ?host= などで実際の接続先がホストの判定・表示と食い違わないようにするためでもあるので、クエリは必ず全部外す
 parsed.search = '';
-const client = new pg.Client({ connectionString: parsed.toString() });
+const client = new pg.Client({
+  connectionString: parsed.toString(),
+  ...(!isLocal && { ssl: sslOptions() }),
+});
 
 try {
   await client.connect();
-  // localhost がトンネル等でリモートにつながっている場合に備え、docker compose の DB ユーザーであることも確かめる
-  const { rows: whoami } = await client.query('SELECT current_user AS u');
-  if (whoami[0].u !== 'cradle') {
-    throw new Error(
-      '開発環境専用です。docker compose の DB（ユーザー cradle）だけに入れられます',
-    );
+  const { rows: whoami } = await client.query(
+    'SELECT current_user AS u, current_database() AS db',
+  );
+  // パスワードは出さない。Supabase の pooler は本番と検証でホストが同じで、接続後の current_user も postgres になるので、
+  // 環境を見分けられるよう URL のユーザー名（postgres.<project-ref>）も出す（不正な % で落ちないよう decode しない）
+  console.log(
+    `接続先: ${parsed.username}@${parsed.host}/${whoami[0].db}（DB 上のユーザー: ${whoami[0].u}、schema: ${schema}）`,
+  );
+  if (isLocal && whoami[0].u !== 'cradle') {
+    // localhost がトンネル等でリモートにつながっている場合に備え、docker compose の DB ユーザーであることも確かめる
+    throw new Error('docker compose の DB（ユーザー cradle）ではありません');
+  }
+  if (!isLocal && !(await confirm())) {
+    throw new Error('中止しました');
   }
   await client.query(`SET search_path TO "${schema}"`);
   if (childId) {
@@ -392,4 +426,37 @@ try {
   process.exitCode = 1;
 } finally {
   await client.end();
+}
+
+// Supabase の証明書は独自の CA で署名されているので、CA を渡されたときだけ検証する
+function sslOptions() {
+  const caPath = process.env.SEED_DATABASE_CA;
+  if (caPath) {
+    try {
+      return { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true };
+    } catch {
+      fail('SEED_DATABASE_CA のファイルを読めません');
+    }
+  }
+  console.warn(
+    '注意: SEED_DATABASE_CA が未指定なので、通信は暗号化しますがサーバーの証明書は検証しません',
+  );
+  return { rejectUnauthorized: false };
+}
+
+// 本番に入れる事故を防ぐため、表示した接続先を見て人が答える。端末でなければ（パイプ・CI など）中止する
+async function confirm() {
+  if (!process.stdin.isTTY) {
+    console.error('localhost 以外への実行は、確認のため端末から行ってください');
+    return false;
+  }
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(
+      `この DB は検証環境ですか？${childId ? 'ダミーの記録を入れます' : 'こどもの一覧を表示します'}（y/N）: `,
+    );
+    return answer.trim().toLowerCase() === 'y';
+  } finally {
+    rl.close();
+  }
 }
