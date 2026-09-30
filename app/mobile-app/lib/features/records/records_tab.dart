@@ -8,25 +8,75 @@ import 'package:intl/intl.dart';
 import '../../core/api_client.dart';
 import 'growth_record.dart';
 import 'record_groups.dart';
+import 'records_calendar_view.dart';
 import 'records_providers.dart';
-
-/// さかのぼれる日数（ページ数 - 1）
-const _maxPastDays = 3650;
 
 /// 前後の日へのページ送り（矢印ボタン）の動き
 const _pageDuration = Duration(milliseconds: 300);
 
-/// 選択中の日の記録一覧。1 日を 1 ページにして、左右にめくって日付を移動する（ViewPager と同じ動き）
-class RecordsTab extends ConsumerStatefulWidget {
+/// 記録タブ。上の切り替えで「日」（1 日ごとの一覧）と「月」（月間カレンダー）を選ぶ
+class RecordsTab extends ConsumerWidget {
   const RecordsTab({super.key, required this.childId});
 
   final String childId;
 
   @override
-  ConsumerState<RecordsTab> createState() => _RecordsTabState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(recordsViewProvider);
+    void show(RecordsView v) =>
+        ref.read(recordsViewProvider.notifier).select(v);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: SegmentedButton<RecordsView>(
+            segments: const [
+              ButtonSegment(
+                value: RecordsView.day,
+                label: Text('日'),
+                tooltip: '1日ごとの記録',
+                icon: Icon(Icons.view_day_outlined),
+              ),
+              ButtonSegment(
+                value: RecordsView.month,
+                label: Text('月'),
+                tooltip: 'カレンダー',
+                icon: Icon(Icons.calendar_month_outlined),
+              ),
+            ],
+            selected: {view},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => show(s.first),
+          ),
+        ),
+        Expanded(
+          // 切り替えるたびに作り直す（日の一覧は、選んでいる日のページから始まる）
+          child: switch (view) {
+            RecordsView.day => _DayView(childId: childId),
+            // こどもを切り替えたら作り直す（生まれた月までのページ数がこどもごとに違うため）
+            RecordsView.month => RecordsCalendarView(
+              key: ValueKey(childId),
+              childId: childId,
+              onOpenDay: () => show(RecordsView.day),
+            ),
+          },
+        ),
+      ],
+    );
+  }
 }
 
-class _RecordsTabState extends ConsumerState<RecordsTab> {
+/// 選択中の日の記録一覧。1 日を 1 ページにして、左右にめくって日付を移動する（ViewPager と同じ動き）
+class _DayView extends ConsumerStatefulWidget {
+  const _DayView({required this.childId});
+
+  final String childId;
+
+  @override
+  ConsumerState<_DayView> createState() => _DayViewState();
+}
+
+class _DayViewState extends ConsumerState<_DayView> {
   /// ページ番号の基準の日（ページ番号 = この日から何日前か）
   late DateTime _today;
   late PageController _pages;
@@ -80,12 +130,12 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
   }
 
   // 夏時間の切り替えで 1 日が 23・25 時間になっても日数がずれないよう、UTC の日付で数える。
-  // さかのぼれるのは _maxPastDays まで（それより前の日は最も古いページに寄せる）
+  // さかのぼれるのは recordsMaxPastDays まで（それより前の日は最も古いページに寄せる）
   int _pageOf(DateTime day) =>
       DateTime.utc(_today.year, _today.month, _today.day)
           .difference(DateTime.utc(day.year, day.month, day.day))
           .inDays
-          .clamp(0, _maxPastDays);
+          .clamp(0, recordsMaxPastDays);
 
   DateTime _dayOf(int page) =>
       DateTime(_today.year, _today.month, _today.day - page);
@@ -95,7 +145,10 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
 
   /// 矢印ボタン: [delta] 日だけページを動かす（+1 で前の日、-1 で次の日）
   Future<void> _step(int base, int delta) async {
-    final target = ((_animatingTo ?? base) + delta).clamp(0, _maxPastDays);
+    final target = ((_animatingTo ?? base) + delta).clamp(
+      0,
+      recordsMaxPastDays,
+    );
     _animatingTo = target;
     await _pages.animateToPage(
       target,
@@ -103,17 +156,6 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
       curve: Curves.easeInOut,
     );
     if (_animatingTo == target) _animatingTo = null;
-  }
-
-  /// 月間カレンダーを開く。日付を選んで戻ってきたら、その日のページへ移る
-  Future<void> _openCalendar(DateTime day) async {
-    final picked = await context.push<DateTime>(
-      '/records/calendar',
-      extra: (childId: widget.childId, month: DateTime(day.year, day.month)),
-    );
-    if (picked == null || !mounted) return;
-    // ページが変わると onPageChanged で選んでいる日も追従する
-    _pages.jumpToPage(_pageOf(picked));
   }
 
   @override
@@ -131,22 +173,15 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
               IconButton(
                 tooltip: '前の日',
                 icon: const Icon(Icons.chevron_left),
-                onPressed: page < _maxPastDays ? () => _step(page, 1) : null,
+                onPressed: page < recordsMaxPastDays
+                    ? () => _step(page, 1)
+                    : null,
               ),
               Expanded(
-                // 日付をタップすると月間カレンダーを開く
-                child: Center(
-                  child: Tooltip(
-                    message: 'カレンダーで見る',
-                    child: TextButton.icon(
-                      onPressed: () => _openCalendar(day),
-                      icon: const Icon(Icons.calendar_month_outlined),
-                      label: Text(
-                        DateFormat('M月d日(E)', 'ja').format(day),
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                  ),
+                child: Text(
+                  DateFormat('M月d日(E)', 'ja').format(day),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
               IconButton(
@@ -165,7 +200,7 @@ class _RecordsTabState extends ConsumerState<RecordsTab> {
             key: ValueKey(_today),
             controller: _pages,
             reverse: true,
-            itemCount: _maxPastDays + 1,
+            itemCount: recordsMaxPastDays + 1,
             onPageChanged: (p) =>
                 ref.read(selectedDayProvider.notifier).select(_dayOf(p)),
             itemBuilder: (_, p) =>

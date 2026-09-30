@@ -133,6 +133,9 @@ final recordsRepositoryProvider = Provider<RecordsRepository>(
 
 DateTime today() => DateUtils.dateOnly(DateTime.now());
 
+/// 記録タブでさかのぼれる日数（日の表示のページ数 - 1。月の表示でもこれより前の日は選べない）
+const recordsMaxPastDays = 3650;
+
 /// 記録画面で表示中の日付。null は「今日」を表し、日付をまたいでも古い日付に固定されない
 class SelectedDay extends Notifier<DateTime?> {
   @override
@@ -141,16 +144,39 @@ class SelectedDay extends Notifier<DateTime?> {
     return null;
   }
 
-  /// 表示する日を選ぶ（記録画面のページ送りから呼ぶ。今日より先の日は渡さない）
+  /// 表示する日を選ぶ（日の表示のページ送り・月の表示のカレンダーから呼ぶ。
+  /// 今日より先の日と、[recordsMaxPastDays] 日より前の日は渡さない）
   void select(DateTime day) {
     final date = DateUtils.dateOnly(day);
     assert(!date.isAfter(today()), 'future day: $date');
+    assert(
+      today().difference(date).inDays <= recordsMaxPastDays + 1,
+      'too old day: $date',
+    );
     state = date == today() ? null : date;
   }
 }
 
 final selectedDayProvider = NotifierProvider<SelectedDay, DateTime?>(
   SelectedDay.new,
+);
+
+/// 記録タブの表示（1 日ごとの一覧・月間カレンダー）
+enum RecordsView { day, month }
+
+/// 記録タブで選んでいる表示。グラフ・AI のタブへ移って戻っても保ち、ログアウトで日に戻す
+class SelectedRecordsView extends Notifier<RecordsView> {
+  @override
+  RecordsView build() {
+    ref.watch(isLoggedInProvider);
+    return RecordsView.day;
+  }
+
+  void select(RecordsView view) => state = view;
+}
+
+final recordsViewProvider = NotifierProvider<SelectedRecordsView, RecordsView>(
+  SelectedRecordsView.new,
 );
 
 final dayRecordsProvider = FutureProvider.autoDispose
